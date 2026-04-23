@@ -139,3 +139,86 @@ def test_init_command_creates_files(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert default_config.exists()
     assert user_config.exists()
+
+
+def test_portfolio_import_command_creates_storage(tmp_path: Path) -> None:
+    """Portfolio import should persist data to the selected storage path."""
+
+    storage = tmp_path / "portfolio.json"
+    result = runner.invoke(
+        app,
+        [
+            "portfolio",
+            "import",
+            "--file",
+            "E:\\TwStockAdvisor\\tests\\fixtures\\portfolio_sample.csv",
+            "--cash",
+            "200000",
+            "--storage",
+            str(storage),
+        ],
+    )
+    assert result.exit_code == 0
+    assert storage.exists()
+    assert "Imported 2 positions" in result.stdout
+
+
+def test_portfolio_show_command_renders_rows(tmp_path: Path, monkeypatch: object) -> None:
+    """Portfolio show should print imported rows and pnl columns."""
+
+    storage = tmp_path / "portfolio.json"
+    runner.invoke(
+        app,
+        [
+            "portfolio",
+            "import",
+            "--file",
+            "E:\\TwStockAdvisor\\tests\\fixtures\\portfolio_sample.csv",
+            "--cash",
+            "200000",
+            "--storage",
+            str(storage),
+        ],
+    )
+
+    quote_2330 = Quote(
+        symbol="2330",
+        name="TSMC",
+        price="600",
+        open="590",
+        high="605",
+        low="588",
+        prev_close="595",
+        volume=1000,
+        bid="599",
+        ask="600",
+        limit_up="654",
+        limit_down="536",
+        timestamp="2026-04-24T10:00:00",
+    )
+    quote_2317 = Quote(
+        symbol="2317",
+        name="HonHai",
+        price="190",
+        open="188",
+        high="191",
+        low="187",
+        prev_close="189",
+        volume=1000,
+        bid="189",
+        ask="190",
+        limit_up="207",
+        limit_down="171",
+        timestamp="2026-04-24T10:00:00",
+    )
+
+    class StubFetcher:
+        async def get_quotes(self, symbols: list[str]) -> dict[str, Quote]:
+            return {"2330": quote_2330, "2317": quote_2317}
+
+    monkeypatch.setattr("twadvisor.cli.create_fetcher", lambda settings: StubFetcher())
+    result = runner.invoke(app, ["portfolio", "show", "--storage", str(storage)])
+    assert result.exit_code == 0
+    assert "Portfolio" in result.stdout
+    assert "2330" in result.stdout
+    assert "2317" in result.stdout

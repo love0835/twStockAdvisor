@@ -4,22 +4,32 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from twadvisor.constants import APP_NAME, DEFAULT_CONFIG_PATH, DISCLAIMER_LINES, USER_CONFIG_PATH
+from twadvisor.constants import (
+    APP_NAME,
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_PORTFOLIO_PATH,
+    DISCLAIMER_LINES,
+    USER_CONFIG_PATH,
+)
 from twadvisor.fetchers.base import FetcherError, SymbolNotFoundError
 from twadvisor.fetchers.factory import create_fetcher
 from twadvisor.indicators.technical import compute_indicators
+from twadvisor.portfolio.manager import PortfolioManager
 from twadvisor.security.keystore import KeyStore
 from twadvisor.settings import load_settings
 
 app = typer.Typer(help="Taiwan stock AI advisor")
 keys_app = typer.Typer(help="Manage API keys and secrets")
+portfolio_app = typer.Typer(help="Manage portfolio holdings")
 app.add_typer(keys_app, name="keys")
+app.add_typer(portfolio_app, name="portfolio")
 console = Console()
 
 CONFIG_TEMPLATE_SOURCE = Path(__file__).resolve().parents[2] / DEFAULT_CONFIG_PATH
@@ -102,7 +112,7 @@ def quote(symbol: str = typer.Argument(..., help="Taiwan stock symbol")) -> None
     table.add_row("High", str(quote_obj.high))
     table.add_row("Low", str(quote_obj.low))
     table.add_row("Prev Close", str(quote_obj.prev_close))
-    table.add_row("Volume(張)", str(quote_obj.volume))
+    table.add_row("Volume(lot)", str(quote_obj.volume))
     table.add_row("Timestamp", quote_obj.timestamp.isoformat(sep=" ", timespec="seconds"))
     console.print(table)
 
@@ -134,6 +144,60 @@ def indicators(symbol: str = typer.Argument(..., help="Taiwan stock symbol")) ->
             continue
         table.add_row(field_name, "-" if value is None else str(value))
     console.print(table)
+
+
+@portfolio_app.command("import")
+def portfolio_import(
+    file: Path = typer.Option(..., "--file", exists=True, readable=True, help="CSV file path"),
+    cash: str | None = typer.Option(None, help="Available cash after import"),
+    storage: Path = typer.Option(Path(DEFAULT_PORTFOLIO_PATH), help="Portfolio storage path"),
+) -> None:
+    """Import portfolio positions from a CSV file."""
+
+    _render_disclaimer()
+    manager = PortfolioManager(storage_path=storage)
+    cash_value = None if cash is None else Decimal(cash)
+    portfolio = manager.import_csv(file, cash=cash_value)
+    console.print(f"Imported {len(portfolio.positions)} positions", style="green")
+
+
+@portfolio_app.command("show")
+def portfolio_show(
+    storage: Path = typer.Option(Path(DEFAULT_PORTFOLIO_PATH), help="Portfolio storage path"),
+) -> None:
+    """Show current portfolio rows with unrealized PnL."""
+
+    _render_disclaimer()
+    manager = PortfolioManager(storage_path=storage)
+    portfolio = manager.load()
+    quotes = {}
+    if portfolio.positions:
+        settings = load_settings()
+        fetcher = create_fetcher(settings)
+        symbols = [position.symbol for position in portfolio.positions]
+        try:
+            quotes = asyncio.run(fetcher.get_quotes(symbols))
+        except (SymbolNotFoundError, FetcherError):
+            quotes = {}
+
+    table = Table(title="Portfolio")
+    table.add_column("Symbol")
+    table.add_column("Qty")
+    table.add_column("Avg Cost")
+    table.add_column("Current")
+    table.add_column("PnL")
+    table.add_column("PnL %")
+    for row in manager.build_rows(quotes):
+        table.add_row(
+            row["symbol"],
+            row["qty"],
+            row["avg_cost"],
+            row["current_price"],
+            row["unrealized_pnl"],
+            row["unrealized_pnl_pct"],
+        )
+    console.print(table)
+    console.print(f"Cash: {portfolio.cash}")
 
 
 def main() -> None:
