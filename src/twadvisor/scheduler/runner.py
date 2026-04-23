@@ -13,12 +13,13 @@ from twadvisor.indicators.technical import compute_indicators
 from twadvisor.models import AnalysisRequest, Strategy
 from twadvisor.portfolio.manager import PortfolioManager
 from twadvisor.risk.validators import ValidationError, validate_recommendation
+from twadvisor.storage.repo import AdvisorRepository
 
 
 class AdvisorRunner:
     """Coordinate periodic data collection, analysis, and notifications."""
 
-    def __init__(self, settings, fetcher, analyzer, portfolio_mgr, notifier) -> None:
+    def __init__(self, settings, fetcher, analyzer, portfolio_mgr, notifier, repo: AdvisorRepository) -> None:
         """Create a runner instance."""
 
         self.settings = settings
@@ -26,6 +27,7 @@ class AdvisorRunner:
         self.analyzer = analyzer
         self.portfolio_mgr = portfolio_mgr
         self.notifier = notifier
+        self.repo = repo
         self.scheduler = AsyncIOScheduler()
         self.market_calendar = MarketCalendar()
         self._ticks_run = 0
@@ -63,6 +65,8 @@ class AdvisorRunner:
             max_position_pct=self.settings.risk.max_position_pct,
         )
         response = await self.analyzer.analyze(request)
+        total_equity = self.repo.save_portfolio_snapshot(portfolio, quotes)
+        self.repo.upsert_performance_daily(total_equity)
         valid_recs = []
         for rec in response.recommendations:
             try:
@@ -76,6 +80,7 @@ class AdvisorRunner:
                 continue
             valid_recs.append(rec)
         if valid_recs:
+            self.repo.save_recommendations(valid_recs, response.market_view, response.warnings)
             await self.notifier.notify(valid_recs, response.market_view)
         self._ticks_run += 1
 

@@ -14,6 +14,7 @@ dependencies = [
     "pydantic-settings>=2.11.0",
     "requests>=2.32.0",
     "rich>=14.0.0",
+    "sqlalchemy>=2.0.39",
     "typer>=0.16.0",
     "twstock>=1.4.0",
     "tzdata>=2025.2",

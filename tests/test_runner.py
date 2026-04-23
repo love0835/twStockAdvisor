@@ -13,6 +13,7 @@ from twadvisor.models import AnalysisResponse, Portfolio, Position, Quote, Recom
 from twadvisor.portfolio.manager import PortfolioManager
 from twadvisor.scheduler.runner import AdvisorRunner
 from twadvisor.settings import load_settings
+from twadvisor.storage.repo import AdvisorRepository
 
 
 class StubNotifier:
@@ -93,7 +94,7 @@ async def test_runner_tick_notifies(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     )
     settings = load_settings()
     notifier = StubNotifier()
-    runner = AdvisorRunner(settings, StubFetcher(), StubAnalyzer(), manager, notifier)
+    runner = AdvisorRunner(settings, StubFetcher(), StubAnalyzer(), manager, notifier, AdvisorRepository(str(tmp_path / "advisor.db")))
     monkeypatch.setattr("twadvisor.scheduler.runner.MarketCalendar.current_session", lambda self, now: "regular")
     await runner.tick(Strategy.SWING, ["2330"])
     assert notifier.calls
@@ -106,7 +107,7 @@ async def test_runner_tick_skips_closed_session(tmp_path: Path) -> None:
     manager = PortfolioManager(storage_path=tmp_path / "portfolio.json")
     settings = load_settings()
     notifier = StubNotifier()
-    runner = AdvisorRunner(settings, StubFetcher(), StubAnalyzer(), manager, notifier)
+    runner = AdvisorRunner(settings, StubFetcher(), StubAnalyzer(), manager, notifier, AdvisorRepository(str(tmp_path / "advisor.db")))
     await runner.tick(Strategy.SWING, ["2330"])
     assert notifier.calls == []
 
@@ -118,6 +119,6 @@ async def test_runner_start_exits_after_max_ticks_when_closed(tmp_path: Path) ->
     manager = PortfolioManager(storage_path=tmp_path / "portfolio.json")
     settings = load_settings()
     notifier = StubNotifier()
-    runner = AdvisorRunner(settings, StubFetcher(), StubAnalyzer(), manager, notifier)
+    runner = AdvisorRunner(settings, StubFetcher(), StubAnalyzer(), manager, notifier, AdvisorRepository(str(tmp_path / "advisor.db")))
     await runner.start(Strategy.SWING, ["2330"], interval_override=10, max_ticks=1)
     assert notifier.calls == []

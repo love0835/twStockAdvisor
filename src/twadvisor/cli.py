@@ -23,11 +23,14 @@ from twadvisor.fetchers.base import FetcherError, SymbolNotFoundError
 from twadvisor.fetchers.factory import create_fetcher
 from twadvisor.indicators.technical import compute_indicators
 from twadvisor.models import AnalysisRequest, Strategy
+from twadvisor.notifier.factory import create_notifier
 from twadvisor.portfolio.manager import PortfolioManager
+from twadvisor.performance.metrics import cumulative_pnl, max_drawdown, sharpe_ratio, win_rate
 from twadvisor.risk.validators import ValidationError, validate_recommendation
 from twadvisor.scheduler.runner import AdvisorRunner
 from twadvisor.security.keystore import KeyStore
 from twadvisor.settings import load_settings
+from twadvisor.storage.repo import AdvisorRepository
 
 app = typer.Typer(help="Taiwan stock AI advisor")
 keys_app = typer.Typer(help="Manage API keys and secrets")
@@ -216,6 +219,7 @@ def analyze(
     settings = load_settings()
     fetcher = create_fetcher(settings)
     analyzer = create_analyzer(settings)
+    repo = AdvisorRepository(settings.app.db_path)
     portfolio = PortfolioManager(storage_path=storage).load()
 
     watchlist_symbols = [symbol.strip() for symbol in watchlist.split(",") if symbol.strip()]
@@ -279,6 +283,9 @@ def analyze(
             warning_text,
             recommendation.reason,
         )
+    total_equity = repo.save_portfolio_snapshot(portfolio, request.quotes)
+    repo.upsert_performance_daily(total_equity)
+    repo.save_recommendations(response.recommendations, response.market_view, response.warnings)
     console.print(f"Market view: {response.market_view}")
     console.print(table)
     console.print(
@@ -303,16 +310,42 @@ def run(
     analyzer = create_analyzer(settings)
     notifier = create_notifier(settings)
     portfolio_mgr = PortfolioManager(storage_path=storage)
+    repo = AdvisorRepository(settings.app.db_path)
     watchlist_symbols = [symbol.strip() for symbol in watchlist.split(",") if symbol.strip()]
-    runner = AdvisorRunner(settings, fetcher, analyzer, portfolio_mgr, notifier)
+    runner = AdvisorRunner(settings, fetcher, analyzer, portfolio_mgr, notifier, repo)
     try:
         asyncio.run(runner.start(strategy, watchlist_symbols, interval_override=interval, max_ticks=max_ticks))
     except KeyboardInterrupt:
         console.print("Runner stopped", style="yellow")
 
 
+@app.command()
+def report(
+    period: str = typer.Option("30d", "--period", help="Reporting window, e.g. 30d"),
+) -> None:
+    """Show stored performance metrics."""
+
+    _render_disclaimer()
+    settings = load_settings()
+    repo = AdvisorRepository(settings.app.db_path)
+    days = int(period[:-1]) if period.endswith("d") else int(period)
+    rows = repo.list_performance_daily(limit=days)
+    pnls = [Decimal(row.daily_pnl) for row in rows]
+    equities = [Decimal(row.total_equity) for row in rows]
+    returns = [row.daily_return for row in rows]
+
+    table = Table(title=f"Performance Report ({period})")
+    table.add_column("Metric")
+    table.add_column("Value")
+    table.add_row("Win Rate", f"{(win_rate(pnls) * Decimal('100')):.2f}%")
+    table.add_row("Cumulative PnL", str(cumulative_pnl(pnls)))
+    table.add_row("Sharpe", f"{sharpe_ratio(returns):.4f}")
+    table.add_row("Max Drawdown", f"{(max_drawdown(equities) * Decimal('100')):.2f}%")
+    table.add_row("Days", str(len(rows)))
+    console.print(table)
+
+
 def main() -> None:
     """Run the Typer application."""
 
     app()
-from twadvisor.notifier.factory import create_notifier

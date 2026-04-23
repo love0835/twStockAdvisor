@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from decimal import Decimal
 
 import pandas as pd
 from typer.testing import CliRunner
@@ -385,3 +386,26 @@ def test_run_command_executes_single_tick(tmp_path: Path, monkeypatch: object) -
         ],
     )
     assert result.exit_code == 0
+
+
+def test_report_command_renders_metrics(tmp_path: Path, monkeypatch: object) -> None:
+    """Report command should render stored metrics."""
+
+    monkeypatch.setenv("PYTHONUTF8", "1")
+    from twadvisor.storage.repo import AdvisorRepository
+
+    db_path = tmp_path / "advisor.db"
+    repo = AdvisorRepository(str(db_path))
+    repo.record_token_usage("claude", "model", 10, 5)
+    repo.upsert_performance_daily(Decimal("100000"))
+
+    default_config = tmp_path / "default.toml"
+    default_config.write_text(
+        f"[app]\ndb_path = \"{str(db_path).replace(chr(92), '/')}\"\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("twadvisor.cli.load_settings", lambda: load_settings(default_path=default_config, user_path=tmp_path / "missing.toml"))
+    result = runner.invoke(app, ["report", "--period", "30d"])
+    assert result.exit_code == 0
+    assert "Performance Report" in result.stdout
