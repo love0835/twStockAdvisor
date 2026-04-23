@@ -1,0 +1,33 @@
+[project]
+name = "twstockadvisor"
+version = "0.1.0"
+description = "台股 AI 分析助手骨架"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "keyring>=25.6.0",
+    "pydantic>=2.11.0",
+    "pydantic-settings>=2.11.0",
+    "rich>=14.0.0",
+    "typer>=0.16.0",
+    "tzdata>=2025.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+]
+
+[project.scripts]
+twadvisor = "twadvisor.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "twadvisor"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,52 @@
+[app]
+timezone = "Asia/Taipei"
+log_level = "INFO"
+db_path = "./data/twadvisor.db"
+
+[market]
+poll_interval_daytrade = 5
+poll_interval_swing = 60
+poll_interval_longterm = 300
+
+[fetcher]
+primary = "finmind"
+fallback = ["twstock", "yahoo"]
+cache_ttl_quote = 3
+cache_ttl_indicators = 300
+
+[ai]
+provider = "claude"
+model_claude = "claude-sonnet-4-6"
+model_openai = "gpt-4o"
+model_gemini = "gemini-2.0-flash"
+temperature = 0.2
+max_output_tokens = 2000
+use_prompt_cache = true
+
+[risk]
+max_position_pct = 0.20
+max_daily_loss_pct = 0.02
+stop_loss_default_pct = 0.05
+take_profit_default_pct = 0.10
+risk_preference = "moderate"
+
+[cost]
+commission_rate = 0.001425
+commission_discount = 0.28
+commission_min = 20
+tax_rate_stock = 0.003
+tax_rate_daytrade = 0.0015
+
+[notifier]
+channels = ["console"]
+
+[notifier.discord]
+mode = "webhook"
+webhook_url_key = "discord_webhook"
+mention_user_id = ""
+embed_color_buy = 3066993
+embed_color_sell = 15158332
+embed_color_hold = 9807270
+
+[security]
+keyring_service = "twadvisor"
