@@ -338,3 +338,50 @@ def test_analyze_command_renders_recommendations(tmp_path: Path, monkeypatch: ob
     assert "Recommendations" in result.stdout
     assert "偏多震盪" in result.stdout
     assert "2317" in result.stdout
+
+
+def test_run_command_executes_single_tick(tmp_path: Path, monkeypatch: object) -> None:
+    """Run command should execute a bounded runner for tests."""
+
+    storage = tmp_path / "portfolio.json"
+    runner.invoke(
+        app,
+        [
+            "portfolio",
+            "import",
+            "--file",
+            "E:\\TwStockAdvisor\\tests\\fixtures\\portfolio_sample.csv",
+            "--cash",
+            "200000",
+            "--storage",
+            str(storage),
+        ],
+    )
+
+    class StubRunner:
+        def __init__(self, *args, **kwargs) -> None:
+            self.called = True
+
+        async def start(self, strategy, watchlist, interval_override=None, max_ticks=None):
+            return None
+
+    monkeypatch.setattr("twadvisor.cli.create_fetcher", lambda settings: object())
+    monkeypatch.setattr("twadvisor.cli.create_analyzer", lambda settings: object())
+    monkeypatch.setattr("twadvisor.cli.create_notifier", lambda settings: object())
+    monkeypatch.setattr("twadvisor.cli.AdvisorRunner", StubRunner)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--strategy",
+            "swing",
+            "--watchlist",
+            "2330",
+            "--storage",
+            str(storage),
+            "--max-ticks",
+            "1",
+        ],
+    )
+    assert result.exit_code == 0

@@ -25,6 +25,7 @@ from twadvisor.indicators.technical import compute_indicators
 from twadvisor.models import AnalysisRequest, Strategy
 from twadvisor.portfolio.manager import PortfolioManager
 from twadvisor.risk.validators import ValidationError, validate_recommendation
+from twadvisor.scheduler.runner import AdvisorRunner
 from twadvisor.security.keystore import KeyStore
 from twadvisor.settings import load_settings
 
@@ -286,7 +287,32 @@ def analyze(
     )
 
 
+@app.command()
+def run(
+    strategy: Strategy = typer.Option(..., "--strategy", case_sensitive=False),
+    watchlist: str = typer.Option("", "--watchlist", help="Comma-separated stock symbols"),
+    interval: int | None = typer.Option(None, "--interval", help="Override polling interval in seconds"),
+    storage: Path = typer.Option(Path(DEFAULT_PORTFOLIO_PATH), help="Portfolio storage path"),
+    max_ticks: int | None = typer.Option(None, "--max-ticks", hidden=True),
+) -> None:
+    """Start the advisor polling loop."""
+
+    _render_disclaimer()
+    settings = load_settings()
+    fetcher = create_fetcher(settings)
+    analyzer = create_analyzer(settings)
+    notifier = create_notifier(settings)
+    portfolio_mgr = PortfolioManager(storage_path=storage)
+    watchlist_symbols = [symbol.strip() for symbol in watchlist.split(",") if symbol.strip()]
+    runner = AdvisorRunner(settings, fetcher, analyzer, portfolio_mgr, notifier)
+    try:
+        asyncio.run(runner.start(strategy, watchlist_symbols, interval_override=interval, max_ticks=max_ticks))
+    except KeyboardInterrupt:
+        console.print("Runner stopped", style="yellow")
+
+
 def main() -> None:
     """Run the Typer application."""
 
     app()
+from twadvisor.notifier.factory import create_notifier
