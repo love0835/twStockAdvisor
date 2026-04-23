@@ -6,16 +6,23 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "keyring>=25.6.0",
+    "numpy>=2.3.0",
+    "pandas>=2.3.0",
     "pydantic>=2.11.0",
     "pydantic-settings>=2.11.0",
+    "requests>=2.32.0",
     "rich>=14.0.0",
     "typer>=0.16.0",
+    "twstock>=1.4.0",
     "tzdata>=2025.2",
+    "yfinance>=0.2.65",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3.0",
+    "pytest-asyncio>=1.1.0",
+    "pytest-cov>=6.1.0",
 ]
 
 [project.scripts]
