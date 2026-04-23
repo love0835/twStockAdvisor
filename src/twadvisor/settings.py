@@ -41,7 +41,7 @@ class AISettings(BaseModel):
     """AI provider settings."""
 
     provider: str = "claude"
-    model_claude: str = "claude-sonnet-4-6"
+    model_claude: str = "claude-sonnet-4-20250514"
     model_openai: str = "gpt-4o"
     model_gemini: str = "gemini-2.0-flash"
     temperature: float = 0.2

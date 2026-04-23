@@ -16,7 +16,7 @@ cache_ttl_indicators = 300
 
 [ai]
 provider = "claude"
-model_claude = "claude-sonnet-4-6"
+model_claude = "claude-sonnet-4-20250514"
 model_openai = "gpt-4o"
 model_gemini = "gemini-2.0-flash"
 temperature = 0.2

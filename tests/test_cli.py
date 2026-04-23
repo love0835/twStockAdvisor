@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 from twadvisor.cli import app
 from twadvisor.constants import DEFAULT_CONFIG_PATH
-from twadvisor.models import Quote
+from twadvisor.models import AnalysisResponse, Quote, Recommendation, Strategy
 from twadvisor.settings import load_settings
 
 runner = CliRunner()
@@ -221,4 +221,120 @@ def test_portfolio_show_command_renders_rows(tmp_path: Path, monkeypatch: object
     assert result.exit_code == 0
     assert "Portfolio" in result.stdout
     assert "2330" in result.stdout
+    assert "2317" in result.stdout
+
+
+def test_analyze_command_renders_recommendations(tmp_path: Path, monkeypatch: object) -> None:
+    """Analyze command should print structured recommendations."""
+
+    storage = tmp_path / "portfolio.json"
+    runner.invoke(
+        app,
+        [
+            "portfolio",
+            "import",
+            "--file",
+            "E:\\TwStockAdvisor\\tests\\fixtures\\portfolio_sample.csv",
+            "--cash",
+            "200000",
+            "--storage",
+            str(storage),
+        ],
+    )
+
+    quote_2330 = Quote(
+        symbol="2330",
+        name="TSMC",
+        price="600",
+        open="590",
+        high="605",
+        low="588",
+        prev_close="595",
+        volume=1000,
+        bid="599",
+        ask="600",
+        limit_up="654",
+        limit_down="536",
+        timestamp="2026-04-24T10:00:00",
+    )
+    quote_2317 = Quote(
+        symbol="2317",
+        name="HonHai",
+        price="190",
+        open="188",
+        high="191",
+        low="187",
+        prev_close="189",
+        volume=1000,
+        bid="189",
+        ask="190",
+        limit_up="207",
+        limit_down="171",
+        timestamp="2026-04-24T10:00:00",
+    )
+
+    frame = pd.DataFrame(
+        {
+            "open": range(100, 220),
+            "high": range(101, 221),
+            "low": range(99, 219),
+            "close": range(100, 220),
+            "volume": range(1000, 1120),
+        },
+        index=pd.date_range("2025-01-01", periods=120, freq="D"),
+    )
+
+    class StubFetcher:
+        async def get_quotes(self, symbols: list[str]) -> dict[str, Quote]:
+            return {"2330": quote_2330, "2317": quote_2317}
+
+        async def get_kline(self, symbol: str, start: object, end: object) -> pd.DataFrame:
+            return frame
+
+        async def get_chip(self, symbol: str, dt: object):
+            from twadvisor.models import ChipData
+
+            return ChipData(symbol=symbol, foreign_net=0, trust_net=0, dealer_net=0, margin_balance=0, short_balance=0, date=pd.Timestamp("2026-04-24").date())
+
+    class StubAnalyzer:
+        async def analyze(self, req):
+            return AnalysisResponse(
+                recommendations=[
+                    Recommendation(
+                        symbol="2317",
+                        action="buy",
+                        qty=1000,
+                        order_type="limit",
+                        price="190",
+                        stop_loss="182",
+                        take_profit="205",
+                        reason="量價轉強",
+                        confidence=0.7,
+                        strategy=Strategy.SWING,
+                        generated_at="2026-04-24T10:00:00",
+                    )
+                ],
+                market_view="偏多震盪",
+                warnings=[],
+                raw_prompt_tokens=100,
+                raw_completion_tokens=50,
+            )
+
+    monkeypatch.setattr("twadvisor.cli.create_fetcher", lambda settings: StubFetcher())
+    monkeypatch.setattr("twadvisor.cli.create_analyzer", lambda settings: StubAnalyzer())
+    result = runner.invoke(
+        app,
+        [
+            "analyze",
+            "--strategy",
+            "swing",
+            "--watchlist",
+            "2317",
+            "--storage",
+            str(storage),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Recommendations" in result.stdout
+    assert "偏多震盪" in result.stdout
     assert "2317" in result.stdout

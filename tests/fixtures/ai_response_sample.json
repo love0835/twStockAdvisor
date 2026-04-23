@@ -1,0 +1,27 @@
+{
+  "market_view": "台股短線偏多但量能分歧，建議選股不追價。",
+  "recommendations": [
+    {
+      "symbol": "2330",
+      "action": "hold",
+      "qty": 0,
+      "order_type": "limit",
+      "reason": "現有持倉仍在均線之上，先續抱觀察。",
+      "confidence": 0.74
+    },
+    {
+      "symbol": "2317",
+      "action": "buy",
+      "qty": 1000,
+      "order_type": "limit",
+      "price": 190,
+      "stop_loss": 182,
+      "take_profit": 205,
+      "reason": "量價配合轉強，可分批布局。",
+      "confidence": 0.68
+    }
+  ],
+  "warnings": [
+    "短線波動加大，請嚴守停損。"
+  ]
+}

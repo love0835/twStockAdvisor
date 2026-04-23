@@ -11,6 +11,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from twadvisor.analyzer.factory import create_analyzer
 from twadvisor.constants import (
     APP_NAME,
     DEFAULT_CONFIG_PATH,
@@ -21,7 +22,9 @@ from twadvisor.constants import (
 from twadvisor.fetchers.base import FetcherError, SymbolNotFoundError
 from twadvisor.fetchers.factory import create_fetcher
 from twadvisor.indicators.technical import compute_indicators
+from twadvisor.models import AnalysisRequest, Strategy
 from twadvisor.portfolio.manager import PortfolioManager
+from twadvisor.risk.validators import ValidationError, validate_recommendation
 from twadvisor.security.keystore import KeyStore
 from twadvisor.settings import load_settings
 
@@ -198,6 +201,89 @@ def portfolio_show(
         )
     console.print(table)
     console.print(f"Cash: {portfolio.cash}")
+
+
+@app.command()
+def analyze(
+    strategy: Strategy = typer.Option(..., "--strategy", case_sensitive=False),
+    watchlist: str = typer.Option(..., "--watchlist", help="Comma-separated stock symbols"),
+    storage: Path = typer.Option(Path(DEFAULT_PORTFOLIO_PATH), help="Portfolio storage path"),
+) -> None:
+    """Run a single AI analysis cycle."""
+
+    _render_disclaimer()
+    settings = load_settings()
+    fetcher = create_fetcher(settings)
+    analyzer = create_analyzer(settings)
+    portfolio = PortfolioManager(storage_path=storage).load()
+
+    watchlist_symbols = [symbol.strip() for symbol in watchlist.split(",") if symbol.strip()]
+    all_symbols = sorted({*watchlist_symbols, *(position.symbol for position in portfolio.positions)})
+    if not all_symbols:
+        console.print("No symbols provided for analysis", style="red")
+        raise typer.Exit(code=1)
+
+    async def _collect_inputs() -> AnalysisRequest:
+        quotes = await fetcher.get_quotes(all_symbols)
+        today = date.today()
+        start = today.replace(year=today.year - 1)
+        indicators = {}
+        chips = {}
+        for symbol in all_symbols:
+            frame = await fetcher.get_kline(symbol, start=start, end=today)
+            indicators[symbol] = compute_indicators(frame, symbol)
+            chips[symbol] = await fetcher.get_chip(symbol, today)
+        return AnalysisRequest(
+            strategy=strategy,
+            portfolio=portfolio,
+            quotes=quotes,
+            indicators=indicators,
+            chips=chips,
+            watchlist=watchlist_symbols,
+            risk_preference=settings.risk.risk_preference,
+            max_position_pct=settings.risk.max_position_pct,
+        )
+
+    try:
+        request = asyncio.run(_collect_inputs())
+        response = asyncio.run(analyzer.analyze(request))
+    except (FetcherError, SymbolNotFoundError, ValueError) as exc:
+        console.print(f"Analyze failed: {exc}", style="red")
+        raise typer.Exit(code=1)
+
+    table = Table(title="Recommendations")
+    table.add_column("Symbol")
+    table.add_column("Action")
+    table.add_column("Qty")
+    table.add_column("Price")
+    table.add_column("Warnings")
+    table.add_column("Reason")
+    for recommendation in response.recommendations:
+        quote = request.quotes[recommendation.symbol]
+        try:
+            warnings = validate_recommendation(
+                recommendation,
+                quote,
+                portfolio,
+                max_position_pct=settings.risk.max_position_pct,
+            )
+            warning_text = "; ".join(warnings) if warnings else "-"
+        except ValidationError as exc:
+            warning_text = f"blocked: {exc}"
+        table.add_row(
+            recommendation.symbol,
+            recommendation.action.value,
+            str(recommendation.qty),
+            "-" if recommendation.price is None else str(recommendation.price),
+            warning_text,
+            recommendation.reason,
+        )
+    console.print(f"Market view: {response.market_view}")
+    console.print(table)
+    console.print(
+        f"Tokens - prompt: {response.raw_prompt_tokens}, completion: {response.raw_completion_tokens}",
+        style="cyan",
+    )
 
 
 def main() -> None:
