@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from twadvisor.analyzer.factory import create_analyzer
+from twadvisor.backtest.engine import BacktestEngine
 from twadvisor.constants import (
     APP_NAME,
     DEFAULT_CONFIG_PATH,
@@ -342,6 +343,54 @@ def report(
     table.add_row("Sharpe", f"{sharpe_ratio(returns):.4f}")
     table.add_row("Max Drawdown", f"{(max_drawdown(equities) * Decimal('100')):.2f}%")
     table.add_row("Days", str(len(rows)))
+    console.print(table)
+
+
+@app.command()
+def backtest(
+    strategy: Strategy = typer.Option(..., "--strategy", case_sensitive=False),
+    from_date: str = typer.Option(..., "--from", help="Backtest start date (YYYY-MM-DD)"),
+    to_date: str = typer.Option(..., "--to", help="Backtest end date (YYYY-MM-DD)"),
+    watchlist: str = typer.Option("", "--watchlist", help="Comma-separated symbols"),
+    storage: Path = typer.Option(Path(DEFAULT_PORTFOLIO_PATH), help="Portfolio storage path"),
+    initial_cash: str = typer.Option("1000000", "--initial-cash", help="Initial capital"),
+) -> None:
+    """Run a historical backtest and print summary metrics."""
+
+    _render_disclaimer()
+    settings = load_settings()
+    fetcher = create_fetcher(settings)
+    portfolio = PortfolioManager(storage_path=storage).load()
+    watchlist_symbols = [symbol.strip() for symbol in watchlist.split(",") if symbol.strip()]
+    symbols = watchlist_symbols or [position.symbol for position in portfolio.positions] or ["2330"]
+    engine = BacktestEngine(initial_cash=Decimal(initial_cash))
+    try:
+        start_dt = date.fromisoformat(from_date)
+        end_dt = date.fromisoformat(to_date)
+    except ValueError as exc:
+        console.print(f"Backtest failed: {exc}", style="red")
+        raise typer.Exit(code=1)
+
+    try:
+        result = asyncio.run(engine.run(fetcher, strategy, symbols, start_dt, end_dt))
+    except (FetcherError, SymbolNotFoundError, ValueError) as exc:
+        console.print(f"Backtest failed: {exc}", style="red")
+        raise typer.Exit(code=1)
+
+    table = Table(title=f"Backtest Report ({strategy.value})")
+    table.add_column("Metric")
+    table.add_column("Value")
+    table.add_row("Symbols", ", ".join(result.symbols))
+    table.add_row("Period", f"{result.start.isoformat()} -> {result.end.isoformat()}")
+    table.add_row("Initial Cash", f"{result.initial_cash:.4f}")
+    table.add_row("Final Equity", f"{result.final_equity:.4f}")
+    table.add_row("Total Return", f"{(result.total_return * Decimal('100')):.2f}%")
+    table.add_row("Benchmark Return", f"{(result.benchmark_return * Decimal('100')):.2f}%")
+    table.add_row("Win Rate", f"{(result.win_rate * Decimal('100')):.2f}%")
+    table.add_row("Profit Factor", f"{result.profit_factor:.4f}")
+    table.add_row("Sharpe", f"{result.sharpe:.4f}")
+    table.add_row("Max Drawdown", f"{(result.max_drawdown * Decimal('100')):.2f}%")
+    table.add_row("Closed Trades", str(result.trade_count))
     console.print(table)
 
 

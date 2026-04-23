@@ -409,3 +409,58 @@ def test_report_command_renders_metrics(tmp_path: Path, monkeypatch: object) -> 
     result = runner.invoke(app, ["report", "--period", "30d"])
     assert result.exit_code == 0
     assert "Performance Report" in result.stdout
+
+
+def test_backtest_command_renders_report(tmp_path: Path, monkeypatch: object) -> None:
+    """Backtest command should render summary metrics."""
+
+    storage = tmp_path / "portfolio.json"
+    runner.invoke(
+        app,
+        [
+            "portfolio",
+            "import",
+            "--file",
+            "E:\\TwStockAdvisor\\tests\\fixtures\\portfolio_sample.csv",
+            "--cash",
+            "200000",
+            "--storage",
+            str(storage),
+        ],
+    )
+
+    frame = pd.DataFrame(
+        {
+            "open": range(100, 230),
+            "high": range(101, 231),
+            "low": range(99, 229),
+            "close": range(100, 230),
+            "volume": range(1000, 1130),
+        },
+        index=pd.date_range("2025-01-01", periods=130, freq="D"),
+    )
+
+    class StubFetcher:
+        async def get_kline(self, symbol: str, start: object, end: object) -> pd.DataFrame:
+            return frame
+
+    monkeypatch.setattr("twadvisor.cli.create_fetcher", lambda settings: StubFetcher())
+    result = runner.invoke(
+        app,
+        [
+            "backtest",
+            "--strategy",
+            "swing",
+            "--from",
+            "2025-01-01",
+            "--to",
+            "2025-05-10",
+            "--watchlist",
+            "2330",
+            "--storage",
+            str(storage),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Backtest Report" in result.stdout
+    assert "Benchmark Return" in result.stdout

@@ -46,3 +46,13 @@ def max_drawdown(equity_curve: list[Decimal]) -> Decimal:
             drawdown = (equity - peak) / peak
             worst = min(worst, drawdown)
     return worst
+
+
+def profit_factor(trade_pnls: list[Decimal]) -> Decimal:
+    """Return gross profit divided by gross loss."""
+
+    profits = sum((value for value in trade_pnls if value > 0), Decimal("0"))
+    losses = sum((-value for value in trade_pnls if value < 0), Decimal("0"))
+    if losses == 0:
+        return profits if profits > 0 else Decimal("0")
+    return profits / losses
