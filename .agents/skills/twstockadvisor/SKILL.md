@@ -33,6 +33,7 @@ Completed phases:
 - Phase 6: SQLAlchemy/SQLite storage and performance report
 - Phase 7: backtest engine and paper trader
 - Phase 8: OpenAI/Gemini analyzer support and FastAPI Web UI
+- Phase 9: market scanner for daytrade and swing candidates with rule pre-screening, TWSE public CSV fetcher, screener API endpoints, Web scanner controls, and regression coverage
 
 Recent delivered behavior:
 
@@ -41,6 +42,9 @@ Recent delivered behavior:
 - Web analysis shows progress while running.
 - Web analysis caches analysis inputs for 10 minutes and avoids unnecessary K-line fetches.
 - `twstock` history fetch avoids repeated yearly/monthly duplication.
+- FinMind chip parsing now uses `buy - sell` fields for institutional net buy/sell data.
+- Market scanner endpoints are available at `POST /api/screener/daytrade` and `POST /api/screener/swing`.
+- Web Analyze panel includes `市場掃描 · AI 推薦` controls for top N, excluding holdings, excluding ETF daytrade names, and choosing foreign consecutive buy days for swing scans.
 
 ## Security Rules
 
@@ -173,6 +177,8 @@ Key modules:
 - `src/twadvisor/models.py`: core Pydantic models and enums
 - `src/twadvisor/settings.py`: TOML settings loader
 - `src/twadvisor/fetchers/`: FinMind, twstock, Yahoo fetchers
+- `src/twadvisor/fetchers/twse.py`: public TWSE CSV lists for day-trade eligibility, attention stocks, and disposition stocks
+- `src/twadvisor/screener/`: Phase 9 market scanner models, rules, prompts, and pipeline
 - `src/twadvisor/analyzer/`: Claude/OpenAI/Gemini analyzers
 - `src/twadvisor/portfolio/`: CSV import, cost, PnL
 - `src/twadvisor/risk/`: validators and guardrails
@@ -189,6 +195,12 @@ For small Web-only changes:
 
 ```powershell
 uv run --python 3.11 pytest tests/test_web.py -v
+```
+
+For Phase 9 scanner changes:
+
+```powershell
+uv run --python 3.11 pytest tests/test_finmind_chip.py tests/test_twse_fetcher.py tests/test_screener_rules.py tests/test_screener_pipeline.py tests/test_screener_api.py -v
 ```
 
 For data fetcher changes:
