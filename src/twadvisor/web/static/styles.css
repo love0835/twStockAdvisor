@@ -61,7 +61,8 @@ body {
 .nav-btn,
 .icon-btn,
 .primary-btn,
-.secondary-btn {
+.secondary-btn,
+.danger-btn {
   border: 0;
   cursor: pointer;
   font: inherit;
@@ -171,6 +172,14 @@ body {
 .inline-form {
   display: flex;
   gap: 14px;
+  align-items: end;
+}
+
+.portfolio-tools {
+  margin: 14px 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(150px, 220px) auto;
+  gap: 12px;
   align-items: end;
 }
 
@@ -317,10 +326,36 @@ select {
   background: #d9e2ec;
 }
 
+.danger-btn {
+  min-height: 40px;
+  padding: 0 16px;
+  background: #fff1f2;
+  color: #be123c;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.danger-btn:hover {
+  background: #ffe4e6;
+}
+
+.compact-btn {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 14px;
+}
+
 .primary-btn:disabled,
-.secondary-btn:disabled {
+.secondary-btn:disabled,
+.danger-btn:disabled {
   cursor: wait;
   opacity: 0.72;
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .scanner-decision-actions {
@@ -390,5 +425,9 @@ thead {
   .topbar {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .portfolio-tools {
+    grid-template-columns: 1fr;
   }
 }

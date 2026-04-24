@@ -28,7 +28,7 @@
         <header class="topbar">
           <div>
             <h2 id="panel-title">持倉</h2>
-            <p id="panel-subtitle">匯入現有持倉、現金與未實現損益</p>
+            <p id="panel-subtitle">管理持倉、現金、手續費折讓與未實現損益</p>
           </div>
           <div class="status-pill" id="health-pill">API 連線中</div>
         </header>
@@ -40,6 +40,20 @@
               <button class="icon-btn" id="refresh-portfolio" title="重新整理">↻</button>
             </div>
             <div class="stats" id="portfolio-stats"></div>
+            <div class="portfolio-tools">
+              <form id="cash-form" class="inline-form">
+                <label>
+                  <span>現金</span>
+                  <input name="cash" id="portfolio-cash-input" inputmode="decimal" />
+                </label>
+                <button type="submit" class="secondary-btn">更新現金</button>
+              </form>
+              <label>
+                <span>手續費折讓</span>
+                <input id="commission-discount" value="0.28" inputmode="decimal" />
+              </label>
+              <button class="primary-btn" id="update-quotes-btn">更新現價與損益</button>
+            </div>
             <div class="selection-bar">
               <button class="secondary-btn" id="select-all-holdings">全選</button>
               <button class="secondary-btn" id="clear-all-holdings">取消</button>
@@ -54,14 +68,38 @@
                     <th>股票</th>
                     <th>股數</th>
                     <th>均價</th>
+                    <th>含手續費成本</th>
                     <th>現價</th>
                     <th>未實現損益</th>
                     <th>報酬率</th>
+                    <th>操作</th>
                   </tr>
                 </thead>
                 <tbody></tbody>
               </table>
             </div>
+            <div class="result-box" id="portfolio-action-result"></div>
+          </section>
+
+          <section class="band">
+            <div class="section-head">
+              <h3>新增持倉</h3>
+            </div>
+            <form id="position-form" class="form-grid">
+              <label>
+                <span>股票代號</span>
+                <input name="symbol" placeholder="例如 2330" />
+              </label>
+              <label>
+                <span>股數</span>
+                <input name="qty" inputmode="numeric" placeholder="例如 1000" />
+              </label>
+              <label>
+                <span>均價</span>
+                <input name="avg_cost" inputmode="decimal" placeholder="例如 580" />
+              </label>
+              <button type="submit" class="primary-btn">新增持倉</button>
+            </form>
           </section>
 
           <section class="band">

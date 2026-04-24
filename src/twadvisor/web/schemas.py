@@ -34,6 +34,35 @@ class PortfolioImportPayload(BaseModel):
     storage_path: str = "data/portfolio.json"
 
 
+class PortfolioCashPayload(BaseModel):
+    """Request body for updating portfolio cash."""
+
+    cash: str
+    storage_path: str = "data/portfolio.json"
+
+
+class PortfolioPositionPayload(BaseModel):
+    """Request body for adding or updating a portfolio position."""
+
+    symbol: str
+    qty: int = Field(ge=0)
+    avg_cost: str
+    storage_path: str = "data/portfolio.json"
+
+
+class PortfolioDeletePayload(BaseModel):
+    """Request body for deleting a portfolio position."""
+
+    storage_path: str = "data/portfolio.json"
+
+
+class PortfolioQuotePayload(BaseModel):
+    """Request body for updating portfolio market prices."""
+
+    storage_path: str = "data/portfolio.json"
+    commission_discount: float | None = Field(default=None, ge=0, le=1)
+
+
 class ScreenerPayload(BaseModel):
     """Request body for market scanner endpoints."""
 

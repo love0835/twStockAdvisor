@@ -40,6 +40,11 @@ def test_portfolio_import_and_read(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("twadvisor.web.routes.load_settings", lambda: _settings(tmp_path))
 
     class StubFetcher:
+        async def get_quote(self, symbol: str) -> Quote:
+            return (
+                await self.get_quotes([symbol])
+            )[symbol]
+
         async def get_quotes(self, symbols: list[str]) -> dict[str, Quote]:
             return {
                 symbol: Quote(
@@ -80,6 +85,56 @@ def test_portfolio_import_and_read(tmp_path: Path, monkeypatch) -> None:
     payload = response.json()
     assert payload["position_count"] == 2
     assert payload["rows"][0]["symbol"] == "2330"
+    assert payload["rows"][0]["current_price"] == "尚未更新"
+
+    quote_response = client.post(
+        "/api/portfolio/quotes",
+        json={"storage_path": storage, "commission_discount": 0.28},
+    )
+    assert quote_response.status_code == 200
+    quote_payload = quote_response.json()
+    assert quote_payload["rows"][0]["current_price"] == "600"
+    assert quote_payload["rows"][0]["unrealized_pnl"] == "17729.18"
+
+
+def test_portfolio_management_endpoints(tmp_path: Path, monkeypatch) -> None:
+    """Portfolio management endpoints should update local holdings."""
+
+    monkeypatch.setattr("twadvisor.web.routes.load_settings", lambda: _settings(tmp_path))
+    client = TestClient(create_app())
+    storage = str(tmp_path / "portfolio.json")
+
+    cash_response = client.post("/api/portfolio/cash", json={"cash": "300000", "storage_path": storage})
+    assert cash_response.status_code == 200
+    assert cash_response.json()["cash"] == "300000"
+
+    add_response = client.post(
+        "/api/portfolio/positions",
+        json={"symbol": "2330", "qty": 1000, "avg_cost": "580", "storage_path": storage},
+    )
+    assert add_response.status_code == 200
+    assert add_response.json()["rows"][0]["symbol"] == "2330"
+
+    duplicate_response = client.post(
+        "/api/portfolio/positions",
+        json={"symbol": "2330", "qty": 1000, "avg_cost": "580", "storage_path": storage},
+    )
+    assert duplicate_response.status_code == 409
+
+    update_response = client.put(
+        "/api/portfolio/positions/2330",
+        json={"symbol": "2330", "qty": 2000, "avg_cost": "590", "storage_path": storage},
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["rows"][0]["qty"] == "2000"
+
+    delete_response = client.request(
+        "DELETE",
+        "/api/portfolio/positions/2330",
+        json={"storage_path": storage},
+    )
+    assert delete_response.status_code == 200
+    assert delete_response.json()["rows"] == []
 
 
 def test_report_endpoint(tmp_path: Path, monkeypatch) -> None:

@@ -1,5 +1,5 @@
 const panelMeta = {
-  portfolio: ["持倉", "匯入現有持倉、現金與未實現損益"],
+  portfolio: ["持倉", "管理持倉、現金、手續費折讓與未實現損益"],
   analyze: ["分析", "執行單次 AI 分析，或掃描全市場推薦標的"],
   report: ["績效", "讀取資料庫內的每日績效紀錄"],
   backtest: ["回測", "用歷史 K 線檢查策略表現"],
@@ -12,6 +12,7 @@ const actionLabels = {
   watch: "觀察",
 };
 
+let portfolioRows = [];
 let portfolioSymbols = [];
 let selectedHoldingSymbols = new Set();
 let hasLoadedPortfolio = false;
@@ -70,6 +71,14 @@ function storagePath() {
   return field ? field.value : "data/portfolio.json";
 }
 
+function commissionDiscount() {
+  const value = document.getElementById("commission-discount").value.trim();
+  if (!value) {
+    return null;
+  }
+  return Number(value);
+}
+
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
   const data = await response.json();
@@ -120,6 +129,58 @@ function holdingToggle(symbol) {
   label.appendChild(input);
   label.appendChild(knob);
   return label;
+}
+
+function rowActions(row) {
+  const wrap = document.createElement("div");
+  wrap.className = "row-actions";
+
+  const editButton = document.createElement("button");
+  editButton.className = "secondary-btn compact-btn";
+  editButton.textContent = "編輯";
+  editButton.addEventListener("click", () => editPosition(row));
+
+  const deleteButton = document.createElement("button");
+  deleteButton.className = "danger-btn compact-btn";
+  deleteButton.textContent = "刪除";
+  deleteButton.addEventListener("click", () => deletePosition(row.symbol));
+
+  wrap.appendChild(editButton);
+  wrap.appendChild(deleteButton);
+  return wrap;
+}
+
+function renderPortfolio(data) {
+  portfolioRows = data.rows;
+  const previousSelection = new Set(selectedHoldingSymbols);
+  portfolioSymbols = data.rows.map((row) => row.symbol);
+  selectedHoldingSymbols = new Set(
+    portfolioSymbols.filter((symbol) => !hasLoadedPortfolio || previousSelection.has(symbol)),
+  );
+  hasLoadedPortfolio = true;
+  document.getElementById("portfolio-cash-input").value = data.cash;
+  renderStats("portfolio-stats", [
+    ["現金", data.cash],
+    ["持股數", String(data.position_count)],
+    ["總成本", data.total_cost],
+    ["更新時間", data.updated_at],
+  ]);
+  renderTable(
+    "portfolio-table",
+    data.rows.map((row) => [
+      holdingToggle(row.symbol),
+      row.symbol,
+      row.qty,
+      row.avg_cost,
+      row.cost_basis || "-",
+      row.current_price,
+      row.unrealized_pnl,
+      row.unrealized_pnl_pct,
+      rowActions(row),
+    ]),
+  );
+  updatePortfolioSelectionHint();
+  updateAiDecisionButton();
 }
 
 function renderAnalysisResult(data, metaPrefix = "") {
@@ -182,6 +243,21 @@ document.querySelectorAll(".nav-btn").forEach((button) => {
   button.addEventListener("click", () => showPanel(button.dataset.panel));
 });
 
+async function loadPortfolio() {
+  try {
+    const data = await fetchJson("/api/portfolio");
+    renderPortfolio(data);
+    document.getElementById("portfolio-action-result").textContent = "持倉已載入，現價與損益尚未更新。";
+  } catch (error) {
+    portfolioRows = [];
+    portfolioSymbols = [];
+    selectedHoldingSymbols = new Set();
+    renderStats("portfolio-stats", [["錯誤", error.message]]);
+    renderTable("portfolio-table", []);
+    updatePortfolioSelectionHint();
+  }
+}
+
 document.getElementById("portfolio-import-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.target);
@@ -193,49 +269,121 @@ document.getElementById("portfolio-import-form").addEventListener("submit", asyn
       body: JSON.stringify(payload),
     });
     document.getElementById("portfolio-import-result").textContent = JSON.stringify(data, null, 2);
+    hasLoadedPortfolio = false;
     await loadPortfolio();
   } catch (error) {
     document.getElementById("portfolio-import-result").textContent = error.message;
   }
 });
 
-async function loadPortfolio() {
+document.getElementById("position-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const payload = {
+    symbol: String(form.get("symbol") || "").trim(),
+    qty: Number(form.get("qty")),
+    avg_cost: String(form.get("avg_cost") || "").trim(),
+    storage_path: storagePath(),
+  };
   try {
-    const data = await fetchJson("/api/portfolio");
-    const previousSelection = new Set(selectedHoldingSymbols);
-    portfolioSymbols = data.rows.map((row) => row.symbol);
-    selectedHoldingSymbols = new Set(
-      portfolioSymbols.filter((symbol) => !hasLoadedPortfolio || previousSelection.has(symbol)),
-    );
-    hasLoadedPortfolio = true;
-    renderStats("portfolio-stats", [
-      ["現金", data.cash],
-      ["持股數", String(data.position_count)],
-      ["總成本", data.total_cost],
-      ["更新時間", data.updated_at],
-    ]);
-    renderTable(
-      "portfolio-table",
-      data.rows.map((row) => [
-        holdingToggle(row.symbol),
-        row.symbol,
-        row.qty,
-        row.avg_cost,
-        row.current_price,
-        row.unrealized_pnl,
-        row.unrealized_pnl_pct,
-      ]),
-    );
+    const data = await fetchJson("/api/portfolio/positions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    event.target.reset();
+    renderPortfolio(data);
+    document.getElementById("portfolio-action-result").textContent = `已新增 ${payload.symbol}。`;
   } catch (error) {
-    portfolioSymbols = [];
-    selectedHoldingSymbols = new Set();
-    renderStats("portfolio-stats", [["錯誤", error.message]]);
-    renderTable("portfolio-table", []);
-  } finally {
-    updatePortfolioSelectionHint();
-    updateAiDecisionButton();
+    document.getElementById("portfolio-action-result").textContent = error.message;
+  }
+});
+
+document.getElementById("cash-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  try {
+    const data = await fetchJson("/api/portfolio/cash", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        cash: String(form.get("cash") || "").trim(),
+        storage_path: storagePath(),
+      }),
+    });
+    renderPortfolio(data);
+    document.getElementById("portfolio-action-result").textContent = "現金已更新。";
+  } catch (error) {
+    document.getElementById("portfolio-action-result").textContent = error.message;
+  }
+});
+
+async function editPosition(row) {
+  const qty = window.prompt(`${row.symbol} 股數`, row.qty);
+  if (qty === null) {
+    return;
+  }
+  const avgCost = window.prompt(`${row.symbol} 均價`, row.avg_cost);
+  if (avgCost === null) {
+    return;
+  }
+  try {
+    const data = await fetchJson(`/api/portfolio/positions/${encodeURIComponent(row.symbol)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        symbol: row.symbol,
+        qty: Number(qty),
+        avg_cost: avgCost,
+        storage_path: storagePath(),
+      }),
+    });
+    renderPortfolio(data);
+    document.getElementById("portfolio-action-result").textContent = `已更新 ${row.symbol}。`;
+  } catch (error) {
+    document.getElementById("portfolio-action-result").textContent = error.message;
   }
 }
+
+async function deletePosition(symbol) {
+  if (!window.confirm(`確定刪除 ${symbol} 持倉？`)) {
+    return;
+  }
+  try {
+    const data = await fetchJson(`/api/portfolio/positions/${encodeURIComponent(symbol)}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ storage_path: storagePath() }),
+    });
+    selectedHoldingSymbols.delete(symbol);
+    renderPortfolio(data);
+    document.getElementById("portfolio-action-result").textContent = `已刪除 ${symbol}。`;
+  } catch (error) {
+    document.getElementById("portfolio-action-result").textContent = error.message;
+  }
+}
+
+document.getElementById("update-quotes-btn").addEventListener("click", async (event) => {
+  const restoreButton = setButtonLoading(event.currentTarget, "更新中...");
+  try {
+    const data = await fetchJson("/api/portfolio/quotes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        storage_path: storagePath(),
+        commission_discount: commissionDiscount(),
+      }),
+    });
+    renderPortfolio(data);
+    const failed = data.failed_symbols || [];
+    document.getElementById("portfolio-action-result").textContent =
+      failed.length === 0 ? "現價與損益已更新。" : `部分更新失敗：${failed.join(", ")}`;
+  } catch (error) {
+    document.getElementById("portfolio-action-result").textContent = error.message;
+  } finally {
+    restoreButton();
+  }
+});
 
 document.getElementById("refresh-portfolio").addEventListener("click", loadPortfolio);
 

@@ -22,6 +22,8 @@ def _round_money(value: Decimal) -> Decimal:
 def _commission(gross_amount: Decimal, discount: float = COMMISSION_DISCOUNT) -> Decimal:
     """Return the commission charged for a trade."""
 
+    if gross_amount <= 0:
+        return Decimal("0.00")
     commission = gross_amount * Decimal(str(COMMISSION_RATE)) * Decimal(str(discount))
     return max(Decimal(str(COMMISSION_MIN)), _round_money(commission))
 

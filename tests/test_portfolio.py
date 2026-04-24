@@ -8,7 +8,7 @@ from pathlib import Path
 
 from twadvisor.models import Portfolio, Position, Quote
 from twadvisor.portfolio.manager import PortfolioManager
-from twadvisor.portfolio.pnl import unrealized_pnl, unrealized_pnl_pct
+from twadvisor.portfolio.pnl import unrealized_cost_basis, unrealized_pnl, unrealized_pnl_pct
 
 
 def test_import_csv_persists_positions(tmp_path: Path) -> None:
@@ -68,7 +68,8 @@ def test_build_rows_includes_unrealized_pnl(tmp_path: Path) -> None:
     rows = manager.build_rows({"2330": quote})
 
     assert rows[0]["current_price"] == "600"
-    assert rows[0]["unrealized_pnl"] == "20000.00"
+    assert rows[0]["cost_basis"] == "580231.42"
+    assert rows[0]["unrealized_pnl"] == "17729.18"
 
 
 def test_set_cash_and_missing_quote_row(tmp_path: Path) -> None:
@@ -80,8 +81,25 @@ def test_set_cash_and_missing_quote_row(tmp_path: Path) -> None:
     rows = manager.build_rows({})
 
     assert updated.cash == Decimal("300000")
-    assert rows[0]["current_price"] == "-"
-    assert rows[0]["unrealized_pnl"] == "-"
+    assert rows[0]["current_price"] == "尚未更新"
+    assert rows[0]["unrealized_pnl"] == "尚未更新"
+
+
+def test_position_crud_helpers(tmp_path: Path) -> None:
+    """Position CRUD helpers should persist local portfolio edits."""
+
+    manager = PortfolioManager(storage_path=tmp_path / "portfolio.json")
+    manager.set_cash(Decimal("100000"))
+
+    added = manager.add_position("2330", 1000, Decimal("580"))
+    assert added.positions[0].symbol == "2330"
+
+    updated = manager.update_position("2330", 2000, Decimal("590"))
+    assert updated.positions[0].qty == 2000
+    assert updated.positions[0].avg_cost == Decimal("590")
+
+    deleted = manager.delete_position("2330")
+    assert deleted.positions == []
 
 
 def test_unrealized_pnl_helpers() -> None:
@@ -104,8 +122,9 @@ def test_unrealized_pnl_helpers() -> None:
         timestamp=datetime(2026, 4, 24, 10, 0, 0),
     )
 
-    assert unrealized_pnl(position, quote) == Decimal("20000")
-    assert unrealized_pnl_pct(position, quote) == Decimal("20000") / Decimal("580000")
+    assert unrealized_cost_basis(position) == Decimal("580231.42")
+    assert unrealized_pnl(position, quote) == Decimal("17729.18")
+    assert unrealized_pnl_pct(position, quote).quantize(Decimal("0.0001")) == Decimal("0.0306")
 
 
 def test_unrealized_pnl_pct_zero_cost() -> None:

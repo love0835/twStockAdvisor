@@ -22,7 +22,16 @@ from twadvisor.risk.validators import ValidationError, validate_recommendation
 from twadvisor.screener.pipeline import ScreenerPipeline
 from twadvisor.settings import load_settings
 from twadvisor.storage.repo import AdvisorRepository
-from twadvisor.web.schemas import AnalyzePayload, BacktestPayload, PortfolioImportPayload, ScreenerPayload
+from twadvisor.web.schemas import (
+    AnalyzePayload,
+    BacktestPayload,
+    PortfolioCashPayload,
+    PortfolioDeletePayload,
+    PortfolioImportPayload,
+    PortfolioPositionPayload,
+    PortfolioQuotePayload,
+    ScreenerPayload,
+)
 
 router = APIRouter()
 _ANALYZE_INPUT_CACHE: dict[tuple[str, str, str], tuple[datetime, object, object]] = {}
@@ -55,22 +64,13 @@ async def get_portfolio(storage_path: str = Query("data/portfolio.json")) -> dic
 
     manager = PortfolioManager(storage_path=storage_path)
     portfolio = manager.load()
-    quotes = {}
-    if portfolio.positions:
-        settings = load_settings()
-        fetcher = create_fetcher(settings)
-        symbols = [position.symbol for position in portfolio.positions]
-        try:
-            quotes = await fetcher.get_quotes(symbols)
-        except (FetcherError, SymbolNotFoundError):
-            quotes = {}
 
     return {
         "cash": str(portfolio.cash),
         "position_count": len(portfolio.positions),
         "total_cost": str(portfolio.total_cost()),
         "updated_at": portfolio.updated_at.isoformat(sep=" ", timespec="seconds"),
-        "rows": manager.build_rows(quotes),
+        "rows": manager.build_rows({}),
     }
 
 
@@ -88,6 +88,96 @@ async def import_portfolio(payload: PortfolioImportPayload) -> dict[str, object]
         "imported": len(portfolio.positions),
         "cash": str(portfolio.cash),
         "storage_path": payload.storage_path,
+    }
+
+
+@router.post("/portfolio/cash")
+async def update_portfolio_cash(payload: PortfolioCashPayload) -> dict[str, object]:
+    """Update portfolio cash from the Web UI."""
+
+    manager = PortfolioManager(storage_path=payload.storage_path)
+    try:
+        portfolio = manager.set_cash(Decimal(payload.cash))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _portfolio_payload(manager, portfolio)
+
+
+@router.post("/portfolio/positions")
+async def add_portfolio_position(payload: PortfolioPositionPayload) -> dict[str, object]:
+    """Add a portfolio position from the Web UI."""
+
+    manager = PortfolioManager(storage_path=payload.storage_path)
+    try:
+        portfolio = manager.add_position(payload.symbol, payload.qty, Decimal(payload.avg_cost))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _portfolio_payload(manager, portfolio)
+
+
+@router.put("/portfolio/positions/{symbol}")
+async def update_portfolio_position(symbol: str, payload: PortfolioPositionPayload) -> dict[str, object]:
+    """Update an existing portfolio position from the Web UI."""
+
+    manager = PortfolioManager(storage_path=payload.storage_path)
+    try:
+        portfolio = manager.update_position(symbol, payload.qty, Decimal(payload.avg_cost))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Position not found: {symbol}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _portfolio_payload(manager, portfolio)
+
+
+@router.delete("/portfolio/positions/{symbol}")
+async def delete_portfolio_position(symbol: str, payload: PortfolioDeletePayload) -> dict[str, object]:
+    """Delete an existing portfolio position from the Web UI."""
+
+    manager = PortfolioManager(storage_path=payload.storage_path)
+    try:
+        portfolio = manager.delete_position(symbol)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Position not found: {symbol}") from exc
+    return _portfolio_payload(manager, portfolio)
+
+
+@router.post("/portfolio/quotes")
+async def update_portfolio_quotes(payload: PortfolioQuotePayload) -> dict[str, object]:
+    """Fetch quotes for portfolio positions and return calculated PnL rows."""
+
+    manager = PortfolioManager(storage_path=payload.storage_path)
+    portfolio = manager.load()
+    settings = load_settings()
+    fetcher = create_fetcher(settings)
+    quotes = {}
+    failed_symbols: set[str] = set()
+    for position in portfolio.positions:
+        try:
+            quotes[position.symbol] = await fetcher.get_quote(position.symbol)
+        except (FetcherError, SymbolNotFoundError, ValueError):
+            failed_symbols.add(position.symbol)
+    return {
+        **_portfolio_payload(manager, portfolio, quotes=quotes, discount=payload.commission_discount),
+        "failed_symbols": sorted(failed_symbols),
+        "rows": manager.build_rows(quotes, discount=payload.commission_discount, failed_symbols=failed_symbols),
+    }
+
+
+def _portfolio_payload(
+    manager: PortfolioManager,
+    portfolio: Portfolio,
+    *,
+    quotes: dict | None = None,
+    discount: float | None = None,
+) -> dict[str, object]:
+    return {
+        "cash": str(portfolio.cash),
+        "position_count": len(portfolio.positions),
+        "total_cost": str(portfolio.total_cost()),
+        "updated_at": portfolio.updated_at.isoformat(sep=" ", timespec="seconds"),
+        "rows": manager.build_rows(quotes or {}, discount=discount),
     }
 
 
