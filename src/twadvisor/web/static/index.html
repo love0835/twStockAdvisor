@@ -75,11 +75,13 @@
                 <button type="submit" class="secondary-btn">儲存折讓</button>
               </form>
               <button class="primary-btn" id="update-quotes-btn">更新現價與損益</button>
+              <span class="api-note">行情 API</span>
             </div>
             <div class="selection-bar">
               <button class="secondary-btn" id="select-all-holdings">全選</button>
               <button class="secondary-btn" id="clear-all-holdings">取消</button>
               <button class="primary-btn" id="portfolio-ai-btn">用 AI 分析勾選持倉</button>
+              <span class="api-note cost">行情 API + Claude</span>
               <span id="portfolio-ai-hint">已選 0 檔</span>
             </div>
             <div class="table-wrap">
@@ -153,6 +155,7 @@
               <label><span>持倉檔案</span><input name="storage_path" value="data/portfolio.json" /></label>
               <label class="checkbox"><input type="checkbox" name="include_portfolio" /><span>參考持倉與現金</span></label>
               <button type="submit" class="primary-btn">執行分析</button>
+              <span class="api-note cost">行情 API + Claude</span>
             </form>
           </section>
 
@@ -167,6 +170,7 @@
                 <div class="scanner-block-head">當沖推薦</div>
                 <label class="checkbox"><input type="checkbox" id="scanner-exclude-etf" checked /><span>排除 ETF / ETN / 槓反</span></label>
                 <button class="primary-btn" id="scan-daytrade-btn">掃描當沖標的</button>
+                <span class="api-note">行情 API，不用 Claude</span>
               </div>
               <div class="scanner-block">
                 <div class="scanner-block-head">短線推薦</div>
@@ -178,6 +182,7 @@
                   </select>
                 </label>
                 <button class="primary-btn" id="scan-swing-btn">掃描短線標的</button>
+                <span class="api-note">行情 API，不用 Claude</span>
               </div>
             </div>
             <div class="scanner-meta" id="scanner-meta">尚未掃描</div>
@@ -190,6 +195,7 @@
             <div class="scanner-decision-actions">
               <label class="checkbox"><input type="checkbox" id="scanner-include-portfolio" /><span>參考持倉與現金</span></label>
               <button class="secondary-btn" id="scanner-ai-decision-btn" disabled>用 AI 做交易決策</button>
+              <span class="api-note cost">只用 Claude，不重抓行情</span>
               <span id="scanner-decision-hint">請先掃描出候選標的</span>
             </div>
           </section>
@@ -239,6 +245,7 @@
               <label><span>結束</span><input name="to_date" value="2024-12-31" /></label>
               <label><span>初始資金</span><input name="initial_cash" value="1000000" /></label>
               <button type="submit" class="primary-btn">執行回測</button>
+              <span class="api-note">歷史行情 API，不用 Claude</span>
             </form>
           </section>
           <section class="band">
@@ -274,6 +281,6 @@
         </section>
       </main>
     </div>
-    <script src="/static/app.js?v=20260425-scanner-decision-cache"></script>
+    <script src="/static/app.js?v=20260425-api-cost-labels"></script>
   </body>
 </html>

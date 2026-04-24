@@ -83,7 +83,7 @@ def test_screener_daytrade_endpoint_returns_recommendations(tmp_path: Path, monk
     FakePipeline.empty = False
     monkeypatch.setattr("twadvisor.web.routes.load_settings", lambda: _settings(tmp_path))
     monkeypatch.setattr("twadvisor.web.routes.create_fetcher", lambda settings: object())
-    monkeypatch.setattr("twadvisor.web.routes.create_analyzer", lambda settings: object())
+    monkeypatch.setattr("twadvisor.web.routes.create_analyzer", lambda settings: (_ for _ in ()).throw(AssertionError("scanner should not call AI")))
     monkeypatch.setattr("twadvisor.web.routes.TwseFetcher", lambda: object())
     monkeypatch.setattr("twadvisor.web.routes.ScreenerPipeline", FakePipeline)
 
@@ -105,7 +105,7 @@ def test_screener_empty_candidates_return_warning(tmp_path: Path, monkeypatch) -
     FakePipeline.empty = True
     monkeypatch.setattr("twadvisor.web.routes.load_settings", lambda: _settings(tmp_path))
     monkeypatch.setattr("twadvisor.web.routes.create_fetcher", lambda settings: object())
-    monkeypatch.setattr("twadvisor.web.routes.create_analyzer", lambda settings: object())
+    monkeypatch.setattr("twadvisor.web.routes.create_analyzer", lambda settings: (_ for _ in ()).throw(AssertionError("scanner should not call AI")))
     monkeypatch.setattr("twadvisor.web.routes.TwseFetcher", lambda: object())
     monkeypatch.setattr("twadvisor.web.routes.ScreenerPipeline", FakePipeline)
 
@@ -115,7 +115,7 @@ def test_screener_empty_candidates_return_warning(tmp_path: Path, monkeypatch) -
 
     assert response.status_code == 200
     assert response.json()["recommendations"] == []
-    assert response.json()["warnings"] == ["無候選股"]
+    assert response.json()["warnings"] == ["無候選股", "市場掃描僅使用行情資料與規則排序，未呼叫 AI。"]
 
 
 def test_screener_endpoint_uses_cache(tmp_path: Path, monkeypatch) -> None:
@@ -126,7 +126,7 @@ def test_screener_endpoint_uses_cache(tmp_path: Path, monkeypatch) -> None:
     FakePipeline.empty = False
     monkeypatch.setattr("twadvisor.web.routes.load_settings", lambda: _settings(tmp_path))
     monkeypatch.setattr("twadvisor.web.routes.create_fetcher", lambda settings: object())
-    monkeypatch.setattr("twadvisor.web.routes.create_analyzer", lambda settings: object())
+    monkeypatch.setattr("twadvisor.web.routes.create_analyzer", lambda settings: (_ for _ in ()).throw(AssertionError("scanner should not call AI")))
     monkeypatch.setattr("twadvisor.web.routes.TwseFetcher", lambda: object())
     monkeypatch.setattr("twadvisor.web.routes.ScreenerPipeline", FakePipeline)
 

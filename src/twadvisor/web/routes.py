@@ -681,13 +681,9 @@ async def _run_screener(source: str, payload: ScreenerPayload, user: CurrentUser
 
     started = time.perf_counter()
     fetcher = create_fetcher(settings)
-    try:
-        analyzer = create_analyzer(settings)
-    except ValueError:
-        analyzer = None
     portfolio = DbPortfolioManager(settings.app.db_path, user.id).load()
     exclude_symbols = {position.symbol for position in portfolio.positions} if payload.exclude_holdings else set()
-    pipeline = ScreenerPipeline(fetcher, TwseFetcher(), analyzer, settings.screener)
+    pipeline = ScreenerPipeline(fetcher, TwseFetcher(), None, settings.screener)
 
     try:
         if source == "daytrade":
@@ -711,8 +707,7 @@ async def _run_screener(source: str, payload: ScreenerPayload, user: CurrentUser
 
     response = _serialize_screen_result(result)
     response["elapsed_sec"] = round(time.perf_counter() - started, 3)
-    if analyzer is None:
-        response["warnings"] = [*response.get("warnings", []), "未連接 AI provider，暫以規則分數排序。"]
+    response["warnings"] = [*response.get("warnings", []), "市場掃描僅使用行情資料與規則排序，未呼叫 AI。"]
     _SCREENER_CACHE[cache_key] = (datetime.utcnow(), response)
     return response
 
