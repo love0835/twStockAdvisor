@@ -86,7 +86,19 @@ class ScreenerPipeline:
             min_turnover=Decimal(str(self.config.daytrade_min_turnover_million)) * Decimal("1000000"),
         )
         screened = screener.screen(candidates)[: self.config.daytrade_candidate_limit]
+        warnings: list[str] = []
+        if not screened and candidates:
+            relaxed = DaytradeScreener(
+                min_price=min_price or Decimal(str(self.config.daytrade_min_price)),
+                max_price=max_price or Decimal(str(self.config.daytrade_max_price)),
+                min_amplitude_pct=Decimal("1.0"),
+                min_turnover=Decimal("100000000"),
+            )
+            screened = relaxed.screen(candidates)[: self.config.daytrade_candidate_limit]
+            if screened:
+                warnings.append("嚴格條件無候選股，已暫時放寬為振幅 1% 且成交金額 1 億以上。")
         result = await self._rank("daytrade", screened, top_n, len(candidates))
+        result.warnings = [*warnings, *result.warnings]
         result.elapsed_sec = round(time.perf_counter() - started, 3)
         return result
 

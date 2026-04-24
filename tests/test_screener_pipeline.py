@@ -101,6 +101,13 @@ class FakeTwse:
         return {"2330", "0050"}
 
 
+class EmptyTwse(FakeTwse):
+    """TWSE provider with no day-trade eligible symbols."""
+
+    async def get_day_trade_eligible(self, dt: date) -> set[str]:
+        return set()
+
+
 @pytest.mark.asyncio
 async def test_pipeline_daytrade_excludes_etf_by_default() -> None:
     """Daytrade pipeline should remove ETF-like candidates when requested."""
@@ -117,13 +124,25 @@ async def test_pipeline_daytrade_excludes_etf_by_default() -> None:
 async def test_pipeline_empty_market_returns_warning() -> None:
     """Empty candidate markets should be a 200-style result, not an exception."""
 
-    settings = ScreenerSettings(daytrade_min_turnover_million=99999)
-    pipeline = ScreenerPipeline(FakeFetcher(), FakeTwse(), None, settings)
+    pipeline = ScreenerPipeline(FakeFetcher(), EmptyTwse(), None, ScreenerSettings())
 
     result = await pipeline.run_daytrade(top_n=5, exclude_etf=True)
 
     assert result.recommendations == []
     assert result.warnings == ["無候選股"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_daytrade_relaxes_rules_when_strict_rules_are_empty() -> None:
+    """Daytrade scanner should avoid a dead-end when strict thresholds are too narrow."""
+
+    settings = ScreenerSettings(daytrade_min_amplitude_pct=9.0)
+    pipeline = ScreenerPipeline(FakeFetcher(), FakeTwse(), None, settings)
+
+    result = await pipeline.run_daytrade(top_n=5, exclude_etf=True)
+
+    assert result.recommendations
+    assert "已暫時放寬" in result.warnings[0]
 
 
 @pytest.mark.asyncio
