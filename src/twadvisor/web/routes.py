@@ -18,7 +18,7 @@ from twadvisor.fetchers.base import FetcherError, SymbolNotFoundError
 from twadvisor.fetchers.factory import create_fetcher
 from twadvisor.fetchers.twse import TwseFetcher
 from twadvisor.indicators.technical import compute_indicators
-from twadvisor.models import AnalysisRequest, ChipData, Portfolio, Strategy
+from twadvisor.models import AnalysisRequest, AnalysisResponse, ChipData, Portfolio, Recommendation, Strategy
 from twadvisor.performance.metrics import cumulative_pnl, max_drawdown, sharpe_ratio, win_rate
 from twadvisor.portfolio.db_manager import DbPortfolioManager
 from twadvisor.portfolio.manager import PortfolioManager
@@ -38,6 +38,7 @@ from twadvisor.web.schemas import (
     PortfolioImportPayload,
     PortfolioPositionPayload,
     PortfolioQuotePayload,
+    ScreenerDecisionPayload,
     ScreenerPayload,
     UserCreatePayload,
 )
@@ -441,48 +442,64 @@ async def analyze(payload: AnalyzePayload, user: CurrentUser = Depends(_current_
         raise HTTPException(status_code=502, detail=f"AI analysis failed: {exc}") from exc
 
     response.warnings = [*input_warnings, *response.warnings]
-    rows = []
-    for recommendation in response.recommendations:
-        quote = request.quotes.get(recommendation.symbol)
-        if quote is None:
-            response.warnings.append(f"AI returned unknown symbol: {recommendation.symbol}")
-            continue
-        try:
-            warnings = validate_recommendation(
-                recommendation,
-                quote,
-                portfolio,
-                max_position_pct=settings.risk.max_position_pct,
-            )
-            warning_text = _localize_warning_text("; ".join(warnings)) if warnings else "-"
-        except ValidationError as exc:
-            warning_text = _localize_warning_text(f"blocked: {exc}")
-        rows.append(
-            {
-                "symbol": recommendation.symbol,
-                "action": recommendation.action.value,
-                "qty": recommendation.qty,
-                "lots": _format_lots(recommendation.qty),
-                "order_type": recommendation.order_type.value,
-                "price": "-" if recommendation.price is None else str(recommendation.price),
-                "stop_loss": "-" if recommendation.stop_loss is None else str(recommendation.stop_loss),
-                "take_profit": "-" if recommendation.take_profit is None else str(recommendation.take_profit),
-                "warnings": warning_text,
-                "reason": recommendation.reason,
-            }
-        )
-
     total_equity = repo.save_portfolio_snapshot(portfolio, request.quotes, user_id=user.id)
     repo.upsert_performance_daily(total_equity)
     repo.save_recommendations(response.recommendations, response.market_view, response.warnings, user_id=user.id)
+    return _serialize_analysis_response(response, request, portfolio, settings.risk.max_position_pct)
 
-    return {
-        "market_view": response.market_view,
-        "recommendations": rows,
-        "warnings": [_localize_warning_text(warning) for warning in response.warnings],
-        "prompt_tokens": response.raw_prompt_tokens,
-        "completion_tokens": response.raw_completion_tokens,
-    }
+
+@router.post("/screener/decision")
+async def screener_decision(payload: ScreenerDecisionPayload, user: CurrentUser = Depends(_current_user)) -> dict[str, object]:
+    """Ask AI for a trading decision from already-scanned candidates without refetching market data."""
+
+    if not payload.candidates:
+        raise HTTPException(status_code=400, detail="No scanner candidates provided")
+    settings = load_settings()
+    try:
+        analyzer = create_analyzer(settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    portfolio = DbPortfolioManager(settings.app.db_path, user.id).load()
+    ai_portfolio = _select_ai_portfolio(
+        portfolio,
+        include_portfolio=payload.include_portfolio,
+        holding_symbols=payload.holding_symbols,
+    )
+    today = date.today()
+    watchlist = [candidate.symbol for candidate in payload.candidates]
+    quotes = {}
+    indicators = {}
+    chips = {}
+    warnings = ["已使用掃描結果做 AI 決策，未重新呼叫 FinMind 行情 API。"]
+    for candidate in payload.candidates:
+        entry_low, entry_high = _parse_entry_range(candidate.entry_range)
+        price = entry_low or entry_high or Decimal("0")
+        quotes[candidate.symbol] = _scanner_quote(candidate.symbol, _scanner_candidate_note(candidate), price, today)
+        indicators[candidate.symbol] = _scanner_indicator(candidate.symbol, candidate)
+        chips[candidate.symbol] = _empty_chip(candidate.symbol, today)
+
+    request = AnalysisRequest(
+        strategy=Strategy(payload.strategy),
+        portfolio=ai_portfolio,
+        quotes=quotes,
+        indicators=indicators,
+        chips=chips,
+        watchlist=watchlist,
+        risk_preference=settings.risk.risk_preference,
+        max_position_pct=settings.risk.max_position_pct,
+    )
+    try:
+        usage_token = set_token_usage_user(user.id)
+        try:
+            response = await analyzer.analyze(request)
+        finally:
+            reset_token_usage_user(usage_token)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI analysis failed: {exc}") from exc
+
+    response.warnings = [*warnings, *response.warnings]
+    return _serialize_analysis_response(response, request, portfolio, settings.risk.max_position_pct)
 
 
 def _select_ai_portfolio(
@@ -508,6 +525,112 @@ def _empty_chip(symbol: str, dt: date) -> ChipData:
         short_balance=0,
         date=dt,
     )
+
+
+def _serialize_analysis_response(
+    response: AnalysisResponse,
+    request: AnalysisRequest,
+    portfolio: Portfolio,
+    max_position_pct: float,
+) -> dict[str, object]:
+    rows = []
+    for recommendation in response.recommendations:
+        quote = request.quotes.get(recommendation.symbol)
+        if quote is None:
+            response.warnings.append(f"AI returned unknown symbol: {recommendation.symbol}")
+            continue
+        try:
+            warnings = validate_recommendation(
+                recommendation,
+                quote,
+                portfolio,
+                max_position_pct=max_position_pct,
+            )
+            warning_text = _localize_warning_text("; ".join(warnings)) if warnings else "-"
+        except ValidationError as exc:
+            warning_text = _localize_warning_text(f"blocked: {exc}")
+        rows.append(_serialize_recommendation_row(recommendation, warning_text))
+    return {
+        "market_view": response.market_view,
+        "recommendations": rows,
+        "warnings": [_localize_warning_text(warning) for warning in response.warnings],
+        "prompt_tokens": response.raw_prompt_tokens,
+        "completion_tokens": response.raw_completion_tokens,
+    }
+
+
+def _serialize_recommendation_row(recommendation: Recommendation, warning_text: str) -> dict[str, object]:
+    return {
+        "symbol": recommendation.symbol,
+        "action": recommendation.action.value,
+        "qty": recommendation.qty,
+        "lots": _format_lots(recommendation.qty),
+        "order_type": recommendation.order_type.value,
+        "price": "-" if recommendation.price is None else str(recommendation.price),
+        "stop_loss": "-" if recommendation.stop_loss is None else str(recommendation.stop_loss),
+        "take_profit": "-" if recommendation.take_profit is None else str(recommendation.take_profit),
+        "warnings": warning_text,
+        "reason": recommendation.reason,
+    }
+
+
+def _parse_entry_range(value: str) -> tuple[Decimal | None, Decimal | None]:
+    normalized = str(value or "").replace("～", "~").replace("—", "~").replace("-", "~")
+    parts = [part.strip() for part in normalized.split("~")]
+    decimals = []
+    for part in parts[:2]:
+        try:
+            decimals.append(Decimal(part))
+        except Exception:
+            decimals.append(None)
+    while len(decimals) < 2:
+        decimals.append(None)
+    return decimals[0], decimals[1]
+
+
+def _scanner_quote(symbol: str, name: str, price: Decimal, dt: date):
+    from twadvisor.fetchers.limits import limit_down_from_prev_close, limit_up_from_prev_close
+    from twadvisor.models import Quote
+
+    return Quote(
+        symbol=symbol,
+        name=name,
+        price=price,
+        open=price,
+        high=price,
+        low=price,
+        prev_close=price,
+        volume=0,
+        bid=price,
+        ask=price,
+        limit_up=limit_up_from_prev_close(price),
+        limit_down=limit_down_from_prev_close(price),
+        timestamp=datetime.combine(dt, datetime.min.time()),
+        is_suspended=False,
+    )
+
+
+def _scanner_candidate_note(candidate) -> str:
+    name = candidate.name or candidate.symbol
+    return (
+        f"{name}; scanner_entry_range={candidate.entry_range}; "
+        f"scanner_stop_loss={candidate.stop_loss}; scanner_take_profit={candidate.take_profit}; "
+        f"scanner_rule_score={candidate.rule_score}; scanner_reason={candidate.reason}"
+    )
+
+
+def _scanner_indicator(symbol: str, candidate) -> object:
+    from twadvisor.models import TechnicalIndicators
+
+    score = _decimal_or_none(candidate.rule_score)
+    return TechnicalIndicators(symbol=symbol, ma5=None, ma20=None, ma60=None, rsi14=score)
+
+
+def _decimal_or_none(value: str) -> Decimal | None:
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
 
 
 def _localize_warning_text(text: str) -> str:

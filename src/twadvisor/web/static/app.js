@@ -14,6 +14,7 @@ let selectedHoldingSymbols = new Set();
 let hasLoadedPortfolio = false;
 let lastScannerSource = null;
 let lastScannerSymbols = [];
+let lastScannerRecommendations = [];
 
 function $(id) {
   return document.getElementById(id);
@@ -254,6 +255,29 @@ async function runAiAnalysis({ strategy, watchlist, includePortfolio, holdingSym
   }
 }
 
+async function runScannerDecision({ strategy, candidates, includePortfolio, holdingSymbols, metaPrefix, button }) {
+  const restoreButton = button ? setButtonLoading(button, "AI 決策中...") : () => {};
+  $("market-view").textContent = "正在把掃描結果交給 AI 做交易決策，不會重新抓 FinMind 行情...";
+  $("analyze-meta").textContent = metaPrefix ? `${metaPrefix}狀態: 已送出，等待 AI 回應...` : "狀態: 已送出，等待 AI 回應...";
+  renderTable("analyze-table", []);
+  try {
+    const data = await fetchJson("/api/screener/decision", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ strategy, candidates, include_portfolio: includePortfolio, holding_symbols: holdingSymbols, storage_path: storagePath() }),
+    });
+    renderAnalysisResult(data, metaPrefix);
+    showPanel("analyze");
+  } catch (error) {
+    $("market-view").textContent = error.message;
+    $("analyze-meta").textContent = metaPrefix ? `${metaPrefix}分析失敗: ${error.message}` : `分析失敗: ${error.message}`;
+    renderTable("analyze-table", []);
+    showPanel("analyze");
+  } finally {
+    restoreButton();
+  }
+}
+
 async function loadPortfolio() {
   try {
     const data = await fetchJson("/api/portfolio");
@@ -345,6 +369,7 @@ async function runScanner(source, button) {
   const restoreButton = setButtonLoading(button, "掃描中...");
   lastScannerSource = source;
   lastScannerSymbols = [];
+  lastScannerRecommendations = [];
   updateAiDecisionButton();
   $("scanner-meta").textContent = source === "daytrade" ? "正在掃描全市場當沖候選股..." : "正在掃描全市場短線候選股...";
   try {
@@ -354,6 +379,7 @@ async function runScanner(source, button) {
       body: JSON.stringify(scannerPayload()),
     });
     lastScannerSymbols = data.recommendations.map((row) => row.symbol);
+    lastScannerRecommendations = data.recommendations;
     $("scanner-meta").textContent = `全市場 ${data.candidates_total} → 規則篩選後 ${data.candidates_after_rules} → Top ${data.recommendations.length}，耗時 ${data.elapsed_sec} 秒`;
     if (data.warnings && data.warnings.length) $("scanner-meta").textContent += `\n提醒：${data.warnings.join("；")}`;
     renderTable("scanner-table", data.recommendations.map((row) => [
@@ -557,15 +583,15 @@ function bindEvents() {
   $("scan-daytrade-btn").addEventListener("click", (event) => runScanner("daytrade", event.currentTarget));
   $("scan-swing-btn").addEventListener("click", (event) => runScanner("swing", event.currentTarget));
   $("scanner-ai-decision-btn").addEventListener("click", (event) => {
-    if (lastScannerSymbols.length === 0) {
+    if (lastScannerRecommendations.length === 0) {
       $("scanner-meta").textContent = "請先掃描出候選標的。";
       return;
     }
     const strategy = lastScannerSource === "daytrade" ? "daytrade" : "swing";
     const includePortfolio = $("scanner-include-portfolio").checked;
-    runAiAnalysis({
+    runScannerDecision({
       strategy,
-      watchlist: lastScannerSymbols,
+      candidates: lastScannerRecommendations,
       includePortfolio,
       holdingSymbols: includePortfolio ? portfolioSymbols : [],
       metaPrefix: includePortfolio ? `AI 決策標的: ${lastScannerSymbols.join(", ")}\n已參考持倉: ${portfolioSymbols.join(", ")}\n` : `AI 決策標的: ${lastScannerSymbols.join(", ")}\n`,

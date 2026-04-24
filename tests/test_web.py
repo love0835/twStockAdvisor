@@ -359,3 +359,68 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
     assert include_payload["recommendations"][0]["warnings"] == "單一持股比重超過設定上限；偵測到零股交易數量"
     assert StubAnalyzer.seen_positions == ["2317"]
     assert StubFetcher.calls == ["2330", "2317"]
+
+
+def test_screener_decision_reuses_scanner_rows(tmp_path: Path, monkeypatch) -> None:
+    """Scanner AI decision should not refetch FinMind market data."""
+
+    settings = _settings(tmp_path)
+    monkeypatch.setattr("twadvisor.web.routes.load_settings", lambda: settings)
+
+    def fail_fetcher(settings) -> object:
+        raise AssertionError("create_fetcher should not be called")
+
+    class StubAnalyzer:
+        async def analyze(self, req) -> AnalysisResponse:
+            symbol = req.watchlist[0]
+            return AnalysisResponse(
+                recommendations=[
+                    Recommendation(
+                        symbol=symbol,
+                        action="hold",
+                        qty=0,
+                        order_type="limit",
+                        price=None,
+                        stop_loss=None,
+                        take_profit=None,
+                        reason="沿用掃描結果觀察",
+                        confidence=0.7,
+                        strategy=Strategy.DAYTRADE,
+                        generated_at=datetime(2026, 4, 24, 10, 0, 0),
+                    )
+                ],
+                market_view="使用掃描結果決策",
+                warnings=[],
+                raw_prompt_tokens=10,
+                raw_completion_tokens=5,
+            )
+
+    monkeypatch.setattr("twadvisor.web.routes.create_fetcher", fail_fetcher)
+    monkeypatch.setattr("twadvisor.web.routes.create_analyzer", lambda settings: StubAnalyzer())
+    client = TestClient(create_app())
+    _login(client)
+
+    response = client.post(
+        "/api/screener/decision",
+        json={
+            "strategy": "daytrade",
+            "candidates": [
+                {
+                    "symbol": "2330",
+                    "name": "台積電",
+                    "entry_range": "100 ~ 102",
+                    "stop_loss": "95",
+                    "take_profit": "110",
+                    "reason": "掃描候選",
+                    "rule_score": "80",
+                }
+            ],
+            "include_portfolio": False,
+            "holding_symbols": [],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["recommendations"][0]["symbol"] == "2330"
+    assert "未重新呼叫 FinMind" in payload["warnings"][0]

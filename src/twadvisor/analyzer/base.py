@@ -57,6 +57,7 @@ def build_analysis_prompt(req: AnalysisRequest) -> tuple[str, str]:
             "\n".join(
                 [
                     f"### {symbol}",
+                    f"name={quote.name}",
                     f"price={quote.price}, prev_close={quote.prev_close}, limit_up={quote.limit_up}, limit_down={quote.limit_down}",
                     f"ma5={indicator.ma5}, ma20={indicator.ma20}, ma60={indicator.ma60}, kd_k={indicator.kd_k}, kd_d={indicator.kd_d}, macd={indicator.macd}, rsi14={indicator.rsi14}",
                     f"foreign_net={chip.foreign_net}, trust_net={chip.trust_net}, dealer_net={chip.dealer_net}",

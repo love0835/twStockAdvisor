@@ -111,3 +111,25 @@ class ScreenerPayload(BaseModel):
     exclude_etf: bool = True
     foreign_consecutive_days: int = Field(default=3, ge=0, le=10)
     storage_path: str = "data/portfolio.json"
+
+
+class ScreenerDecisionCandidate(BaseModel):
+    """Candidate row already produced by the market scanner."""
+
+    symbol: str
+    name: str = ""
+    entry_range: str = ""
+    stop_loss: str = ""
+    take_profit: str = ""
+    reason: str = ""
+    rule_score: str = "0"
+
+
+class ScreenerDecisionPayload(BaseModel):
+    """Request body for AI decisions based on scanner rows."""
+
+    strategy: str
+    candidates: list[ScreenerDecisionCandidate] = Field(default_factory=list)
+    include_portfolio: bool = False
+    holding_symbols: list[str] = Field(default_factory=list)
+    storage_path: str = "data/portfolio.json"
