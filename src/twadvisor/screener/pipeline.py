@@ -10,7 +10,7 @@ from typing import Any
 
 import pandas as pd
 
-from twadvisor.fetchers.base import BaseFetcher
+from twadvisor.fetchers.base import BaseFetcher, FetcherError, SymbolNotFoundError
 from twadvisor.fetchers.twse import TwseFetcher
 from twadvisor.screener.base import Candidate, RankedRecommendation, ScreenResult
 from twadvisor.screener.daytrade import DaytradeScreener
@@ -18,6 +18,29 @@ from twadvisor.screener.prompts import build_rank_prompt
 from twadvisor.screener.swing import SwingScreener
 from twadvisor.screener.universe import is_etf, name_from_record, symbol_from_record, to_decimal, to_int
 from twadvisor.settings import ScreenerSettings
+
+LIQUID_FALLBACK_SYMBOLS = (
+    "2330",
+    "2317",
+    "2454",
+    "2308",
+    "2382",
+    "2303",
+    "3231",
+    "3037",
+    "3711",
+    "2357",
+    "2345",
+    "2881",
+    "2882",
+    "2603",
+    "2618",
+    "2412",
+    "2891",
+    "2886",
+    "2327",
+    "2379",
+)
 
 
 class ScreenerPipeline:
@@ -47,8 +70,10 @@ class ScreenerPipeline:
 
         started = time.perf_counter()
         today = date.today()
-        rows, info = self._fetch_market_rows(today)
         attention, disposition, eligible = await self._twse_lists(today)
+        info = self._fetch_stock_info()
+        preferred_symbols = self._daytrade_symbols(info, eligible, exclude_etf, top_n)
+        rows = await self._fetch_market_rows(today, preferred_symbols)
         candidates = self._build_candidates(rows, info, "daytrade", attention, disposition, eligible)
         if exclude_etf:
             candidates = [item for item in candidates if not is_etf(item.symbol, item.name, info.get(item.symbol))]
@@ -77,8 +102,10 @@ class ScreenerPipeline:
 
         started = time.perf_counter()
         today = date.today()
-        rows, info = self._fetch_market_rows(today)
         attention, disposition, eligible = await self._twse_lists(today)
+        info = self._fetch_stock_info()
+        preferred_symbols = self._swing_symbols(info, top_n)
+        rows = await self._fetch_market_rows(today, preferred_symbols)
         candidates = self._build_candidates(rows, info, "swing", attention, disposition, eligible)
         if exclude_symbols:
             candidates = [item for item in candidates if item.symbol not in exclude_symbols]
@@ -96,21 +123,93 @@ class ScreenerPipeline:
         result.elapsed_sec = round(time.perf_counter() - started, 3)
         return result
 
-    def _fetch_market_rows(self, dt: date) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-        if hasattr(self.fetcher, "get_market_prices"):
-            rows = self.fetcher.get_market_prices(dt)
-        elif hasattr(self.fetcher, "_request"):
-            payload = self.fetcher._request(dataset="TaiwanStockPrice", start_date=str(dt), end_date=str(dt))
-            rows = payload.get("data", [])
-        else:
-            rows = []
-        info: dict[str, dict[str, Any]] = {}
+    def _fetch_stock_info(self) -> dict[str, dict[str, Any]]:
+        """Fetch stock metadata when the provider supports it."""
+
         if hasattr(self.fetcher, "get_stock_info"):
-            info = self.fetcher.get_stock_info()
-        elif hasattr(self.fetcher, "_request"):
+            return self.fetcher.get_stock_info()
+        if hasattr(self.fetcher, "_request"):
             payload = self.fetcher._request(dataset="TaiwanStockInfo")
-            info = {symbol_from_record(row): row for row in payload.get("data", []) if symbol_from_record(row)}
-        return rows, info
+            return {symbol_from_record(row): row for row in payload.get("data", []) if symbol_from_record(row)}
+        return {}
+
+    async def _fetch_market_rows(self, dt: date, fallback_symbols: list[str]) -> list[dict[str, Any]]:
+        """Fetch market rows, falling back to capped per-symbol quotes on restricted FinMind levels."""
+
+        if hasattr(self.fetcher, "get_market_prices"):
+            try:
+                return self.fetcher.get_market_prices(dt)
+            except (AttributeError, FetcherError):
+                return await self._fetch_symbol_quote_rows(fallback_symbols)
+        elif hasattr(self.fetcher, "_request"):
+            try:
+                payload = self.fetcher._request(dataset="TaiwanStockPrice", start_date=str(dt), end_date=str(dt))
+                return payload.get("data", [])
+            except FetcherError:
+                return await self._fetch_symbol_quote_rows(fallback_symbols)
+        return await self._fetch_symbol_quote_rows(fallback_symbols)
+
+    async def _fetch_symbol_quote_rows(self, symbols: list[str]) -> list[dict[str, Any]]:
+        """Build market-like rows from per-symbol quotes."""
+
+        rows: list[dict[str, Any]] = []
+        for symbol in symbols:
+            try:
+                quote = await self.fetcher.get_quote(symbol)
+            except (FetcherError, SymbolNotFoundError, ValueError):
+                continue
+            volume_shares = quote.volume * 1000
+            rows.append(
+                {
+                    "stock_id": quote.symbol,
+                    "stock_name": quote.name,
+                    "close": quote.price,
+                    "max": quote.high,
+                    "min": quote.low,
+                    "Trading_Volume": volume_shares,
+                    "Trading_money": quote.price * Decimal(volume_shares),
+                }
+            )
+        return rows
+
+    def _daytrade_symbols(
+        self,
+        info: dict[str, dict[str, Any]],
+        eligible: set[str],
+        exclude_etf: bool,
+        top_n: int,
+    ) -> list[str]:
+        """Pick a quota-safe fallback universe for day-trade scans."""
+
+        limit = min(max(top_n * 10, 20), self.config.daytrade_candidate_limit)
+        symbols = []
+        ordered_symbols = list(LIQUID_FALLBACK_SYMBOLS) + sorted(eligible)
+        for symbol in ordered_symbols:
+            if symbol in symbols or symbol not in eligible:
+                continue
+            record = info.get(symbol, {})
+            name = name_from_record(record, symbol)
+            if exclude_etf and is_etf(symbol, name, record):
+                continue
+            symbols.append(symbol)
+            if len(symbols) >= limit:
+                break
+        return symbols
+
+    def _swing_symbols(self, info: dict[str, dict[str, Any]], top_n: int) -> list[str]:
+        """Pick a quota-safe fallback universe for swing scans."""
+
+        limit = min(max(top_n * 8, 20), self.config.swing_candidate_limit)
+        symbols = []
+        for symbol, record in sorted(info.items()):
+            if str(record.get("type", "")).lower() not in {"twse", "tpex"}:
+                continue
+            if is_etf(symbol, name_from_record(record, symbol), record):
+                continue
+            symbols.append(symbol)
+            if len(symbols) >= limit:
+                break
+        return symbols
 
     async def _twse_lists(self, dt: date) -> tuple[set[str], set[str], set[str]]:
         attention = await self.twse_fetcher.get_attention_stocks(dt)

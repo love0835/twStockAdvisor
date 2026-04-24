@@ -12,10 +12,10 @@ import requests
 from twadvisor.fetchers.base import FetcherError
 from twadvisor.fetchers.cache import TTLCache
 
-DAY_TRADE_URL = "https://www.twse.com.tw/rwd/zh/marginTrading/twtb4u?response=csv"
+DAY_TRADE_URL = "https://www.twse.com.tw/exchangeReport/TWTB4U?date={date}&response=csv&selectType=All"
 ATTENTION_URL = "https://www.twse.com.tw/rwd/zh/announcement/notice?response=csv"
 DISPOSITION_URL = "https://www.twse.com.tw/rwd/zh/announcement/punish?response=csv"
-SYMBOL_RE = re.compile(r"\b\d{4,6}\b")
+SYMBOL_RE = re.compile(r"^[0-9A-Z]{4,6}$")
 
 
 class TwseFetcher:
@@ -46,7 +46,8 @@ class TwseFetcher:
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
-        response = requests.get(url, timeout=self.timeout)
+        request_url = url.format(date=target_date.strftime("%Y%m%d"))
+        response = requests.get(request_url, timeout=self.timeout)
         if response.status_code >= 400:
             raise FetcherError(f"TWSE request failed: {response.status_code}")
         symbols = parse_twse_symbols(response.content)
@@ -62,7 +63,7 @@ def parse_twse_symbols(content: bytes) -> set[str]:
     reader = csv.reader(io.StringIO(text))
     for row in reader:
         for cell in row:
-            match = SYMBOL_RE.search(cell.strip())
+            match = SYMBOL_RE.match(cell.strip().upper())
             if match:
                 symbols.add(match.group(0))
                 break

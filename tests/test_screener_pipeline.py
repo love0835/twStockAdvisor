@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pandas as pd
 import pytest
 
+from twadvisor.fetchers.base import FetcherError
 from twadvisor.models import ChipData, Quote
 from twadvisor.screener.pipeline import ScreenerPipeline
 from twadvisor.settings import ScreenerSettings
@@ -42,8 +43,22 @@ class FakeFetcher:
             "0050": {"stock_id": "0050", "stock_name": "元大台灣50", "type": "etf"},
         }
 
-    async def get_quote(self, symbol: str) -> Quote:  # pragma: no cover - protocol filler
-        raise NotImplementedError
+    async def get_quote(self, symbol: str) -> Quote:
+        return Quote(
+            symbol=symbol,
+            name=symbol,
+            price=Decimal("100"),
+            open=Decimal("99"),
+            high=Decimal("104"),
+            low=Decimal("100"),
+            prev_close=Decimal("99"),
+            volume=5000,
+            bid=Decimal("100"),
+            ask=Decimal("100.5"),
+            limit_up=Decimal("110"),
+            limit_down=Decimal("90"),
+            timestamp=datetime(2026, 4, 24, 10, 0, 0),
+        )
 
     async def get_quotes(self, symbols: list[str]) -> dict[str, Quote]:  # pragma: no cover
         raise NotImplementedError
@@ -57,6 +72,20 @@ class FakeFetcher:
 
     async def get_chip(self, symbol: str, dt: date) -> ChipData:
         return ChipData(symbol=symbol, foreign_net=500, trust_net=300, dealer_net=0, margin_balance=0, short_balance=0, date=dt)
+
+
+class RestrictedFinMindLikeFetcher(FakeFetcher):
+    """Fetcher that rejects full-market TaiwanStockPrice requests."""
+
+    def get_market_prices(self, dt: date) -> list[dict[str, object]]:
+        raise AttributeError("use _request")
+
+    def _request(self, **params: str) -> dict:
+        if params["dataset"] == "TaiwanStockPrice":
+            raise FetcherError("FinMind request failed: 400")
+        if params["dataset"] == "TaiwanStockInfo":
+            return {"data": list(self.get_stock_info().values())}
+        return {"data": []}
 
 
 class FakeTwse:
@@ -95,3 +124,15 @@ async def test_pipeline_empty_market_returns_warning() -> None:
 
     assert result.recommendations == []
     assert result.warnings == ["無候選股"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_falls_back_when_full_market_finmind_is_restricted() -> None:
+    """Registered FinMind levels can reject full-market price requests."""
+
+    pipeline = ScreenerPipeline(RestrictedFinMindLikeFetcher(), FakeTwse(), None, ScreenerSettings())
+
+    result = await pipeline.run_daytrade(top_n=1, exclude_etf=True)
+
+    assert result.candidates_total == 1
+    assert result.recommendations[0].symbol == "2330"
