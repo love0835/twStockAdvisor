@@ -12,6 +12,7 @@ import pandas as pd
 
 from twadvisor.fetchers.base import BaseFetcher, FetcherError, SymbolNotFoundError
 from twadvisor.fetchers.twse import TwseFetcher
+from twadvisor.models import ChipData
 from twadvisor.screener.base import Candidate, RankedRecommendation, ScreenResult
 from twadvisor.screener.daytrade import DaytradeScreener
 from twadvisor.screener.prompts import build_rank_prompt
@@ -119,9 +120,11 @@ class ScreenerPipeline:
         preferred_symbols = self._swing_symbols(info, top_n)
         rows = await self._fetch_market_rows(today, preferred_symbols)
         candidates = self._build_candidates(rows, info, "swing", attention, disposition, eligible)
+        candidates = [item for item in candidates if not is_etf(item.symbol, item.name, info.get(item.symbol))]
         if exclude_symbols:
             candidates = [item for item in candidates if item.symbol not in exclude_symbols]
-        coarse = sorted(candidates, key=lambda item: item.turnover, reverse=True)[: self.config.swing_candidate_limit]
+        enrich_limit = min(max(top_n, 8), self.config.swing_candidate_limit)
+        coarse = sorted(candidates, key=lambda item: item.turnover, reverse=True)[:enrich_limit]
         enriched = await self._enrich_swing(coarse, today, foreign_consecutive_days)
         screener = SwingScreener(
             min_price=min_price or Decimal(str(self.config.swing_min_price)),
@@ -131,7 +134,20 @@ class ScreenerPipeline:
             min_foreign_net_lots=self.config.swing_min_foreign_net_lots,
         )
         screened = screener.screen(enriched, foreign_consecutive_days=foreign_consecutive_days)
+        warnings: list[str] = []
+        if not screened and enriched:
+            relaxed = SwingScreener(
+                min_price=min_price or Decimal(str(self.config.swing_min_price)),
+                max_price=max_price or Decimal(str(self.config.swing_max_price)),
+                min_volume_lots=self.config.swing_min_volume_lots,
+                require_above_ma20=False,
+                min_foreign_net_lots=0,
+            )
+            screened = relaxed.screen(enriched, foreign_consecutive_days=0)
+            if screened:
+                warnings.append("嚴格短線條件無候選股，已暫時放寬外資連買、MA20 與法人買超條件。")
         result = await self._rank("swing", screened, top_n, len(candidates))
+        result.warnings = [*warnings, *result.warnings]
         result.elapsed_sec = round(time.perf_counter() - started, 3)
         return result
 
@@ -150,13 +166,15 @@ class ScreenerPipeline:
 
         if hasattr(self.fetcher, "get_market_prices"):
             try:
-                return self.fetcher.get_market_prices(dt)
+                rows = self.fetcher.get_market_prices(dt)
+                return rows or await self._fetch_symbol_quote_rows(fallback_symbols)
             except (AttributeError, FetcherError):
                 return await self._fetch_symbol_quote_rows(fallback_symbols)
         elif hasattr(self.fetcher, "_request"):
             try:
                 payload = self.fetcher._request(dataset="TaiwanStockPrice", start_date=str(dt), end_date=str(dt))
-                return payload.get("data", [])
+                rows = payload.get("data", [])
+                return rows or await self._fetch_symbol_quote_rows(fallback_symbols)
             except FetcherError:
                 return await self._fetch_symbol_quote_rows(fallback_symbols)
         return await self._fetch_symbol_quote_rows(fallback_symbols)
@@ -213,7 +231,9 @@ class ScreenerPipeline:
 
         limit = min(max(top_n * 8, 20), self.config.swing_candidate_limit)
         symbols = []
-        for symbol, record in sorted(info.items()):
+        ordered = [(symbol, info.get(symbol, {})) for symbol in LIQUID_FALLBACK_SYMBOLS]
+        ordered.extend((symbol, record) for symbol, record in sorted(info.items()) if symbol not in LIQUID_FALLBACK_SYMBOLS)
+        for symbol, record in ordered:
             if str(record.get("type", "")).lower() not in {"twse", "tpex"}:
                 continue
             if is_etf(symbol, name_from_record(record, symbol), record):
@@ -224,10 +244,21 @@ class ScreenerPipeline:
         return symbols
 
     async def _twse_lists(self, dt: date) -> tuple[set[str], set[str], set[str]]:
-        attention = await self.twse_fetcher.get_attention_stocks(dt)
-        disposition = await self.twse_fetcher.get_disposition_stocks(dt)
-        eligible = await self.twse_fetcher.get_day_trade_eligible(dt)
-        return attention, disposition, eligible
+        last_error: FetcherError | None = None
+        for offset in range(8):
+            lookup_date = dt - timedelta(days=offset)
+            try:
+                attention = await self.twse_fetcher.get_attention_stocks(lookup_date)
+                disposition = await self.twse_fetcher.get_disposition_stocks(lookup_date)
+                eligible = await self.twse_fetcher.get_day_trade_eligible(lookup_date)
+            except FetcherError as exc:
+                last_error = exc
+                continue
+            if eligible or offset == 7:
+                return attention, disposition, eligible
+        if last_error is not None:
+            raise last_error
+        return set(), set(), set()
 
     def _build_candidates(
         self,
@@ -286,7 +317,7 @@ class ScreenerPipeline:
                         ma20 = Decimal(str(closes.mean())).quantize(Decimal("0.01"))
                         above_ma20 = candidate.close > ma20
                     chip_dates = list(pd.to_datetime(frame.index).date)[-max(foreign_days, 5) :]
-                    chips = [await self.fetcher.get_chip(candidate.symbol, chip_date) for chip_date in chip_dates]
+                    chips = await self._fetch_chip_series(candidate.symbol, chip_dates)
                     foreign_net = sum(chip.foreign_net for chip in chips[-5:])
                     trust_net = sum(chip.trust_net for chip in chips[-5:])
                     if foreign_days > 0 and not all(chip.foreign_net > 0 for chip in chips[-foreign_days:]):
@@ -304,6 +335,46 @@ class ScreenerPipeline:
                 )
             )
         return enriched
+
+    async def _fetch_chip_series(self, symbol: str, chip_dates: list[date]) -> list[ChipData]:
+        if not chip_dates:
+            return []
+        if hasattr(self.fetcher, "_request"):
+            try:
+                payload = self.fetcher._request(
+                    dataset="TaiwanStockInstitutionalInvestorsBuySell",
+                    data_id=symbol,
+                    start_date=str(chip_dates[0]),
+                    end_date=str(chip_dates[-1]),
+                )
+                grouped: dict[date, dict[str, int]] = {}
+                for entry in payload.get("data", []):
+                    entry_date = date.fromisoformat(str(entry["date"]))
+                    by_name = grouped.setdefault(entry_date, {})
+                    value = (
+                        int(entry["buy"]) - int(entry["sell"])
+                        if "buy" in entry and "sell" in entry
+                        else int(entry.get("buy_sell", 0))
+                    )
+                    by_name[str(entry.get("name", ""))] = value
+                return [
+                    ChipData(
+                        symbol=symbol,
+                        foreign_net=grouped.get(chip_date, {}).get("Foreign_Investor", 0),
+                        trust_net=grouped.get(chip_date, {}).get("Investment_Trust", 0),
+                        dealer_net=grouped.get(chip_date, {}).get("Dealer_self", 0),
+                        margin_balance=0,
+                        short_balance=0,
+                        date=chip_date,
+                    )
+                    for chip_date in chip_dates
+                ]
+            except (FetcherError, KeyError, TypeError, ValueError):
+                pass
+        chips = []
+        for chip_date in chip_dates:
+            chips.append(await self.fetcher.get_chip(symbol, chip_date))
+        return chips
 
     async def _rank(self, source: str, candidates: list[Candidate], top_n: int, total: int) -> ScreenResult:
         if not candidates:

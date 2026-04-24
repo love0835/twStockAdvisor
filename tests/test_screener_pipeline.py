@@ -88,6 +88,44 @@ class RestrictedFinMindLikeFetcher(FakeFetcher):
         return {"data": []}
 
 
+class EmptyMarketFetcher(FakeFetcher):
+    """Fetcher that returns no full-market rows on non-trading days."""
+
+    def get_market_prices(self, dt: date) -> list[dict[str, object]]:
+        return []
+
+
+class RangeChipFetcher(FakeFetcher):
+    """Fetcher with bulk institutional chip data support."""
+
+    chip_calls = 0
+
+    def _request(self, **params: str) -> dict:
+        if params["dataset"] != "TaiwanStockInstitutionalInvestorsBuySell":
+            return {"data": []}
+        start = date.fromisoformat(str(params["start_date"]))
+        end = date.fromisoformat(str(params["end_date"]))
+        dates = pd.date_range(start, end)
+        return {
+            "data": [
+                {"date": day.date().isoformat(), "name": "Foreign_Investor", "buy": 2000, "sell": 1000}
+                for day in dates
+            ]
+            + [{"date": end.isoformat(), "name": "Investment_Trust", "buy": 1500, "sell": 500}]
+        }
+
+    async def get_chip(self, symbol: str, dt: date) -> ChipData:
+        self.__class__.chip_calls += 1
+        return await super().get_chip(symbol, dt)
+
+    async def get_kline(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+        dates = pd.date_range("2026-03-20", periods=25)
+        return pd.DataFrame(
+            {"open": [89] * 25, "high": [95] * 25, "low": [88] * 25, "close": [90] * 25, "volume": [5_000_000] * 25},
+            index=dates,
+        )
+
+
 class FakeTwse:
     """TWSE list provider."""
 
@@ -155,3 +193,29 @@ async def test_pipeline_falls_back_when_full_market_finmind_is_restricted() -> N
 
     assert result.candidates_total == 1
     assert result.recommendations[0].symbol == "2330"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_falls_back_when_full_market_rows_are_empty() -> None:
+    """Non-trading days can return an empty full-market response."""
+
+    pipeline = ScreenerPipeline(EmptyMarketFetcher(), FakeTwse(), None, ScreenerSettings())
+
+    result = await pipeline.run_daytrade(top_n=1, exclude_etf=True)
+
+    assert result.candidates_total == 1
+    assert result.recommendations[0].symbol == "2330"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_uses_bulk_chip_data_for_swing_enrichment() -> None:
+    """Swing enrichment should avoid repeated per-day chip calls when range data exists."""
+
+    RangeChipFetcher.chip_calls = 0
+    pipeline = ScreenerPipeline(RangeChipFetcher(), FakeTwse(), None, ScreenerSettings())
+
+    result = await pipeline.run_swing(top_n=1, foreign_consecutive_days=3)
+
+    assert result.recommendations
+    assert result.recommendations[0].symbol == "2330"
+    assert RangeChipFetcher.chip_calls == 0
