@@ -74,8 +74,14 @@ function commissionDiscount() {
 
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || "請求失敗");
+  let data = {};
+  try {
+    data = await response.json();
+  } catch (_error) {
+    if (!response.ok) throw new Error(`請求失敗 (${response.status})`);
+    throw new Error("伺服器回應格式錯誤");
+  }
+  if (!response.ok) throw new Error(data.detail || `請求失敗 (${response.status})`);
   return data;
 }
 
@@ -206,9 +212,11 @@ function renderAnalysisResult(data, metaPrefix = "", target = {}) {
   const viewId = target.viewId || "market-view";
   const metaId = target.metaId || "analyze-meta";
   const tableId = target.tableId || "analyze-table";
-  $(viewId).textContent = data.market_view;
-  $(metaId).textContent = `${metaPrefix}輸入 tokens: ${data.prompt_tokens}\n輸出 tokens: ${data.completion_tokens}`;
-  renderTable(tableId, data.recommendations.map((row) => [
+  const recommendations = data.recommendations || [];
+  $(viewId).textContent = data.market_view || (recommendations.length ? "AI 已完成分析。" : "AI 沒有回傳可執行建議。");
+  const warnings = (data.warnings || []).length ? `\n提醒: ${data.warnings.join("; ")}` : "";
+  $(metaId).textContent = `${metaPrefix}輸入 tokens: ${data.prompt_tokens}\n輸出 tokens: ${data.completion_tokens}${warnings}`;
+  renderTable(tableId, recommendations.map((row) => [
     row.symbol,
     actionLabels[row.action] || row.action,
     row.lots ? `${row.lots} / ${row.qty} 股` : String(row.qty),
@@ -226,7 +234,7 @@ async function runAiAnalysis({ strategy, watchlist, includePortfolio, holdingSym
   const metaId = target.metaId || "analyze-meta";
   const tableId = target.tableId || "analyze-table";
   $(viewId).textContent = "正在抓取行情與技術指標，接著呼叫 AI 分析...";
-  $(metaId).textContent = "";
+  $(metaId).textContent = metaPrefix ? `${metaPrefix}狀態: 已送出，等待 AI 回應...` : "狀態: 已送出，等待 AI 回應...";
   renderTable(tableId, []);
   try {
     const data = await fetchJson("/api/analyze", {
@@ -238,6 +246,7 @@ async function runAiAnalysis({ strategy, watchlist, includePortfolio, holdingSym
     if (switchToAnalyze) showPanel("analyze");
   } catch (error) {
     $(viewId).textContent = error.message;
+    $(metaId).textContent = metaPrefix ? `${metaPrefix}分析失敗: ${error.message}` : `分析失敗: ${error.message}`;
     renderTable(tableId, []);
     if (switchToAnalyze) showPanel("analyze");
   } finally {
