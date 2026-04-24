@@ -176,10 +176,13 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
     )
 
     class StubFetcher:
+        calls: list[str] = []
+
         async def get_quotes(self, symbols: list[str]) -> dict[str, Quote]:
             return {symbol: quote for symbol in symbols}
 
         async def get_kline(self, symbol: str, start: object, end: object) -> pd.DataFrame:
+            self.calls.append(symbol)
             return frame
 
         async def get_chip(self, symbol: str, dt: object) -> ChipData:
@@ -229,3 +232,4 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
     payload = response.json()
     assert payload["market_view"] == "區間震盪"
     assert payload["recommendations"][0]["symbol"] == "2330"
+    assert StubFetcher.calls == ["2330"]

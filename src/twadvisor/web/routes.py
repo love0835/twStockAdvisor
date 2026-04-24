@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import date
 from decimal import Decimal
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -99,7 +97,8 @@ async def analyze(payload: AnalyzePayload) -> dict[str, object]:
 
     repo = AdvisorRepository(settings.app.db_path)
     portfolio = PortfolioManager(storage_path=payload.storage_path).load()
-    all_symbols = sorted({*payload.watchlist, *(position.symbol for position in portfolio.positions)})
+    analysis_symbols = payload.watchlist or [position.symbol for position in portfolio.positions]
+    all_symbols = sorted({*analysis_symbols, *(position.symbol for position in portfolio.positions)})
     if not all_symbols:
         raise HTTPException(status_code=400, detail="No symbols provided for analysis")
 
@@ -109,7 +108,7 @@ async def analyze(payload: AnalyzePayload) -> dict[str, object]:
         start = today.replace(year=today.year - 1)
         indicators = {}
         chips = {}
-        for symbol in all_symbols:
+        for symbol in analysis_symbols:
             frame = await fetcher.get_kline(symbol, start=start, end=today)
             indicators[symbol] = compute_indicators(frame, symbol)
             chips[symbol] = await fetcher.get_chip(symbol, today)
@@ -119,7 +118,7 @@ async def analyze(payload: AnalyzePayload) -> dict[str, object]:
             quotes=quotes,
             indicators=indicators,
             chips=chips,
-            watchlist=payload.watchlist,
+            watchlist=analysis_symbols,
             risk_preference=settings.risk.risk_preference,
             max_position_pct=settings.risk.max_position_pct,
         )

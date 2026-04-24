@@ -110,6 +110,7 @@ document.getElementById("refresh-portfolio").addEventListener("click", loadPortf
 
 document.getElementById("analyze-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const submitButton = event.submitter;
   const form = new FormData(event.target);
   const payload = {
     strategy: form.get("strategy"),
@@ -119,6 +120,14 @@ document.getElementById("analyze-form").addEventListener("submit", async (event)
       .filter(Boolean),
     storage_path: form.get("storage_path"),
   };
+  const originalButtonText = submitButton ? submitButton.textContent : "";
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "分析中...";
+  }
+  document.getElementById("market-view").textContent = "正在抓取行情與技術指標，接著呼叫 AI 分析...";
+  document.getElementById("analyze-meta").textContent = "";
+  renderTable("analyze-table", []);
   try {
     const data = await fetchJson("/api/analyze", {
       method: "POST",
@@ -141,6 +150,11 @@ document.getElementById("analyze-form").addEventListener("submit", async (event)
   } catch (error) {
     document.getElementById("market-view").textContent = error.message;
     renderTable("analyze-table", []);
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = originalButtonText;
+    }
   }
 });
 
