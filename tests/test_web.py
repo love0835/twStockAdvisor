@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 from fastapi.testclient import TestClient
 
+from twadvisor.fetchers.base import SymbolNotFoundError
 from twadvisor.models import AnalysisResponse, ChipData, Quote, Recommendation, Strategy
 from twadvisor.settings import load_settings
 from twadvisor.storage.repo import AdvisorRepository
@@ -267,6 +268,8 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
             return frame
 
         async def get_chip(self, symbol: str, dt: object) -> ChipData:
+            if symbol == "2317":
+                raise SymbolNotFoundError(symbol)
             return ChipData(
                 symbol=symbol,
                 foreign_net=0,
@@ -349,5 +352,6 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
         },
     )
     assert include_response.status_code == 200
+    assert "2317 缺少籌碼資料" in include_response.json()["warnings"][0]
     assert StubAnalyzer.seen_positions == ["2317"]
     assert StubFetcher.calls == ["2330", "2317"]

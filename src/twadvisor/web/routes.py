@@ -18,7 +18,7 @@ from twadvisor.fetchers.base import FetcherError, SymbolNotFoundError
 from twadvisor.fetchers.factory import create_fetcher
 from twadvisor.fetchers.twse import TwseFetcher
 from twadvisor.indicators.technical import compute_indicators
-from twadvisor.models import AnalysisRequest, Portfolio, Strategy
+from twadvisor.models import AnalysisRequest, ChipData, Portfolio, Strategy
 from twadvisor.performance.metrics import cumulative_pnl, max_drawdown, sharpe_ratio, win_rate
 from twadvisor.portfolio.db_manager import DbPortfolioManager
 from twadvisor.portfolio.manager import PortfolioManager
@@ -383,6 +383,7 @@ async def analyze(payload: AnalyzePayload, user: CurrentUser = Depends(_current_
     all_symbols = sorted(set(analysis_symbols) | {position.symbol for position in ai_portfolio.positions})
     if not all_symbols:
         raise HTTPException(status_code=400, detail="No symbols provided for analysis")
+    input_warnings: list[str] = []
 
     async def _collect_inputs() -> AnalysisRequest:
         quotes = await fetcher.get_quotes(all_symbols)
@@ -398,7 +399,11 @@ async def analyze(payload: AnalyzePayload, user: CurrentUser = Depends(_current_
                 continue
             frame = await fetcher.get_kline(symbol, start=start, end=today)
             indicator = compute_indicators(frame, symbol)
-            chip = await fetcher.get_chip(symbol, today)
+            try:
+                chip = await fetcher.get_chip(symbol, today)
+            except SymbolNotFoundError:
+                chip = _empty_chip(symbol, today)
+                input_warnings.append(f"{symbol} 缺少籌碼資料，已用 0 值繼續分析")
             indicators[symbol] = indicator
             chips[symbol] = chip
             _ANALYZE_INPUT_CACHE[cache_key] = (datetime.utcnow(), indicator, chip)
@@ -425,6 +430,7 @@ async def analyze(payload: AnalyzePayload, user: CurrentUser = Depends(_current_
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"AI analysis failed: {exc}") from exc
 
+    response.warnings = [*input_warnings, *response.warnings]
     rows = []
     for recommendation in response.recommendations:
         quote = request.quotes.get(recommendation.symbol)
@@ -480,6 +486,18 @@ def _select_ai_portfolio(
     selected = {symbol.strip() for symbol in holding_symbols if symbol.strip()}
     positions = [position for position in portfolio.positions if not selected or position.symbol in selected]
     return Portfolio(cash=portfolio.cash, positions=positions, updated_at=portfolio.updated_at)
+
+
+def _empty_chip(symbol: str, dt: date) -> ChipData:
+    return ChipData(
+        symbol=symbol,
+        foreign_net=0,
+        trust_net=0,
+        dealer_net=0,
+        margin_balance=0,
+        short_balance=0,
+        date=dt,
+    )
 
 
 def _format_lots(qty: int) -> str:
