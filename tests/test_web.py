@@ -207,6 +207,9 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
                         action="hold",
                         qty=0,
                         order_type="limit",
+                        price=Decimal("600"),
+                        stop_loss=Decimal("570"),
+                        take_profit=Decimal("660"),
                         reason="等待整理結束",
                         confidence=0.7,
                         strategy=Strategy.SWING,
@@ -234,6 +237,10 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
     payload = response.json()
     assert payload["market_view"] == "區間震盪"
     assert payload["recommendations"][0]["symbol"] == "2330"
+    assert payload["recommendations"][0]["lots"] == "0"
+    assert payload["recommendations"][0]["price"] == "600"
+    assert payload["recommendations"][0]["stop_loss"] == "570"
+    assert payload["recommendations"][0]["take_profit"] == "660"
     assert StubFetcher.calls == ["2330"]
 
     second_response = client.post(

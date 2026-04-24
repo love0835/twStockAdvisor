@@ -82,7 +82,8 @@ def test_prompt_includes_all_portfolio() -> None:
 
     analyzer = ClaudeAnalyzer(api_key="token", client=SimpleNamespace(messages=None))
     system_prompt, user_prompt = analyzer.build_prompt(_request())
-    assert "台股分析助手" in system_prompt
+    assert "台股分析助理" in system_prompt
+    assert "建議限價下單價" in system_prompt
     assert "2330" in user_prompt
     assert "qty=1000" in user_prompt
     assert "strategy" not in system_prompt.lower()

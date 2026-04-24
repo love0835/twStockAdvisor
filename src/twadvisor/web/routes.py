@@ -162,7 +162,11 @@ async def analyze(payload: AnalyzePayload) -> dict[str, object]:
                 "symbol": recommendation.symbol,
                 "action": recommendation.action.value,
                 "qty": recommendation.qty,
+                "lots": _format_lots(recommendation.qty),
+                "order_type": recommendation.order_type.value,
                 "price": "-" if recommendation.price is None else str(recommendation.price),
+                "stop_loss": "-" if recommendation.stop_loss is None else str(recommendation.stop_loss),
+                "take_profit": "-" if recommendation.take_profit is None else str(recommendation.take_profit),
                 "warnings": warning_text,
                 "reason": recommendation.reason,
             }
@@ -179,6 +183,13 @@ async def analyze(payload: AnalyzePayload) -> dict[str, object]:
         "prompt_tokens": response.raw_prompt_tokens,
         "completion_tokens": response.raw_completion_tokens,
     }
+
+
+def _format_lots(qty: int) -> str:
+    if qty == 0:
+        return "0"
+    lots = Decimal(qty) / Decimal("1000")
+    return f"{lots.normalize()} 張" if qty % 1000 == 0 else f"{lots.normalize()} 張（零股 {qty} 股）"
 
 
 @router.post("/screener/daytrade")

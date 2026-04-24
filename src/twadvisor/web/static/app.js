@@ -84,8 +84,10 @@ function renderAnalysisResult(data, metaPrefix = "") {
     data.recommendations.map((row) => [
       row.symbol,
       actionLabels[row.action] || row.action,
-      String(row.qty),
+      row.lots ? `${row.lots} / ${row.qty} 股` : String(row.qty),
       row.price,
+      row.stop_loss || "-",
+      row.take_profit || "-",
       row.warnings,
       row.reason,
     ]),
