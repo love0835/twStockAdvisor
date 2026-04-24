@@ -37,6 +37,24 @@ commission_min = 20
 tax_rate_stock = 0.003
 tax_rate_daytrade = 0.0015
 
+[screener]
+daytrade_min_price = 15
+daytrade_max_price = 800
+daytrade_min_amplitude_pct = 2.0
+daytrade_min_turnover_million = 300
+daytrade_candidate_limit = 50
+daytrade_exclude_etf_default = true
+swing_min_price = 20
+swing_max_price = 2500
+swing_min_volume_lots = 1000
+swing_require_above_ma20 = true
+swing_min_foreign_net_lots = 1000
+swing_foreign_consecutive_days_default = 3
+swing_candidate_limit = 50
+cache_ttl_minutes = 10
+top_n_default = 5
+exclude_holdings_default = true
+
 [notifier]
 channels = ["console"]
 

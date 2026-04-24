@@ -69,6 +69,27 @@ class CostSettings(BaseModel):
     tax_rate_daytrade: float = 0.0015
 
 
+class ScreenerSettings(BaseModel):
+    """Market screener thresholds and defaults."""
+
+    daytrade_min_price: float = 15
+    daytrade_max_price: float = 800
+    daytrade_min_amplitude_pct: float = 2.0
+    daytrade_min_turnover_million: float = 300
+    daytrade_candidate_limit: int = 50
+    daytrade_exclude_etf_default: bool = True
+    swing_min_price: float = 20
+    swing_max_price: float = 2500
+    swing_min_volume_lots: int = 1000
+    swing_require_above_ma20: bool = True
+    swing_min_foreign_net_lots: int = 1000
+    swing_foreign_consecutive_days_default: int = 3
+    swing_candidate_limit: int = 50
+    cache_ttl_minutes: int = 10
+    top_n_default: int = 5
+    exclude_holdings_default: bool = True
+
+
 class DiscordSettings(BaseModel):
     """Discord notifier settings."""
 
@@ -104,6 +125,7 @@ class Settings(BaseSettings):
     ai: AISettings = Field(default_factory=AISettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
     cost: CostSettings = Field(default_factory=CostSettings)
+    screener: ScreenerSettings = Field(default_factory=ScreenerSettings)
     notifier: NotifierSettings = Field(default_factory=NotifierSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
 
