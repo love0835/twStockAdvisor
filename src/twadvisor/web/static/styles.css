@@ -15,6 +15,35 @@ body {
   min-height: 100vh;
 }
 
+.auth-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  background: #fff;
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  padding: 24px;
+}
+
+.auth-card h1 {
+  margin: 0 0 8px;
+}
+
+.auth-card p {
+  margin: 0 0 18px;
+  color: #52606d;
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+}
+
 .sidebar {
   background: #0f1722;
   color: #d9e2ec;
@@ -100,6 +129,14 @@ body {
   justify-content: space-between;
   gap: 16px;
   align-items: center;
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .grid {

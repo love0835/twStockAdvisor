@@ -7,16 +7,20 @@ import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from twadvisor.analyzer.factory import create_analyzer
+from twadvisor.analyzer.token_usage import reset_token_usage_user, set_token_usage_user
+from twadvisor.auth import AuthService, CurrentUser, SESSION_COOKIE_NAME
 from twadvisor.backtest.engine import BacktestEngine
+from twadvisor.constants import DEFAULT_PORTFOLIO_PATH
 from twadvisor.fetchers.base import FetcherError, SymbolNotFoundError
 from twadvisor.fetchers.factory import create_fetcher
 from twadvisor.fetchers.twse import TwseFetcher
 from twadvisor.indicators.technical import compute_indicators
 from twadvisor.models import AnalysisRequest, Portfolio, Strategy
 from twadvisor.performance.metrics import cumulative_pnl, max_drawdown, sharpe_ratio, win_rate
+from twadvisor.portfolio.db_manager import DbPortfolioManager
 from twadvisor.portfolio.manager import PortfolioManager
 from twadvisor.risk.validators import ValidationError, validate_recommendation
 from twadvisor.screener.pipeline import ScreenerPipeline
@@ -25,18 +29,43 @@ from twadvisor.storage.repo import AdvisorRepository
 from twadvisor.web.schemas import (
     AnalyzePayload,
     BacktestPayload,
+    CreateInitialAdminPayload,
+    LoginPayload,
+    PasswordChangePayload,
     PortfolioCashPayload,
+    PortfolioCommissionPayload,
     PortfolioDeletePayload,
     PortfolioImportPayload,
     PortfolioPositionPayload,
     PortfolioQuotePayload,
     ScreenerPayload,
+    UserCreatePayload,
 )
 
 router = APIRouter()
 _ANALYZE_INPUT_CACHE: dict[tuple[str, str, str], tuple[datetime, object, object]] = {}
 _ANALYZE_CACHE_TTL = timedelta(minutes=10)
 _SCREENER_CACHE: dict[tuple[str, str], tuple[datetime, dict[str, object]]] = {}
+
+
+def _auth_service() -> AuthService:
+    settings = load_settings()
+    service = AuthService(settings.app.db_path)
+    service.create_initial_admin_from_env()
+    return service
+
+
+def _current_user(request: Request) -> CurrentUser:
+    user = _auth_service().get_user_by_session(request.cookies.get(SESSION_COOKIE_NAME))
+    if user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+
+def _admin_user(user: CurrentUser = Depends(_current_user)) -> CurrentUser:
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin required")
+    return user
 
 
 @router.get("/health")
@@ -58,15 +87,139 @@ async def bootstrap() -> dict[str, object]:
     }
 
 
+@router.get("/auth/bootstrap")
+async def auth_bootstrap() -> dict[str, object]:
+    """Return whether first-run admin setup is needed."""
+
+    service = _auth_service()
+    return {"needs_admin": service.user_count() == 0}
+
+
+@router.post("/auth/initial-admin")
+async def create_initial_admin(payload: CreateInitialAdminPayload, response: Response) -> dict[str, object]:
+    """Create the first admin account when no users exist."""
+
+    service = _auth_service()
+    if service.user_count() > 0:
+        raise HTTPException(status_code=409, detail="Admin already initialized")
+    try:
+        user = service.create_user(
+            username=payload.username,
+            password=payload.password,
+            display_name=payload.display_name,
+            role="admin",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    settings = load_settings()
+    if settings.app.db_path == "./data/twadvisor.db" and PortfolioManager(storage_path=DEFAULT_PORTFOLIO_PATH).storage_path.exists():
+        DbPortfolioManager(settings.app.db_path, user.id).import_from_json(DEFAULT_PORTFOLIO_PATH)
+    _set_session_cookie(service, response, user)
+    return {"user": user.__dict__}
+
+
+@router.post("/auth/login")
+async def login(payload: LoginPayload, response: Response) -> dict[str, object]:
+    """Log in a family member."""
+
+    service = _auth_service()
+    user = service.authenticate(payload.username, payload.password)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    _set_session_cookie(service, response, user)
+    return {"user": user.__dict__}
+
+
+@router.post("/auth/logout")
+async def logout(request: Request, response: Response) -> dict[str, str]:
+    """Log out the current session."""
+
+    _auth_service().delete_session(request.cookies.get(SESSION_COOKIE_NAME))
+    response.delete_cookie(SESSION_COOKIE_NAME)
+    return {"status": "ok"}
+
+
+@router.get("/auth/me")
+async def me(user: CurrentUser = Depends(_current_user)) -> dict[str, object]:
+    """Return current user."""
+
+    return {"user": user.__dict__}
+
+
+@router.post("/auth/password")
+async def change_password(payload: PasswordChangePayload, user: CurrentUser = Depends(_current_user)) -> dict[str, str]:
+    """Change the current user's password."""
+
+    try:
+        _auth_service().change_password(user.id, payload.current_password, payload.new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok"}
+
+
+@router.get("/admin/users")
+async def admin_users(user: CurrentUser = Depends(_admin_user)) -> dict[str, object]:
+    """List family users."""
+
+    return {"users": _auth_service().list_users()}
+
+
+@router.post("/admin/users")
+async def admin_create_user(payload: UserCreatePayload, user: CurrentUser = Depends(_admin_user)) -> dict[str, object]:
+    """Create a family user."""
+
+    try:
+        created = _auth_service().create_user(
+            username=payload.username,
+            password=payload.password,
+            display_name=payload.display_name,
+            role=payload.role,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"user": created.__dict__}
+
+
+@router.get("/admin/usage")
+async def admin_usage(user: CurrentUser = Depends(_admin_user)) -> dict[str, object]:
+    """Return token usage grouped by user."""
+
+    repo = AdvisorRepository(load_settings().app.db_path)
+    users = {entry["id"]: entry for entry in _auth_service().list_users()}
+    rows = []
+    for row in repo.list_token_usage_by_user():
+        usage_user = users.get(row["user_id"])
+        rows.append(
+            {
+                **row,
+                "username": "-" if usage_user is None else usage_user["username"],
+                "display_name": "-" if usage_user is None else usage_user["display_name"],
+            }
+        )
+    return {"rows": rows}
+
+
+def _set_session_cookie(service: AuthService, response: Response, user: CurrentUser) -> None:
+    token, expires_at = service.create_session(user.id)
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        token,
+        httponly=True,
+        samesite="lax",
+        max_age=30 * 24 * 60 * 60,
+    )
+
+
 @router.get("/portfolio")
-async def get_portfolio(storage_path: str = Query("data/portfolio.json")) -> dict[str, object]:
+async def get_portfolio(user: CurrentUser = Depends(_current_user)) -> dict[str, object]:
     """Return current portfolio rows and summary stats."""
 
-    manager = PortfolioManager(storage_path=storage_path)
+    manager = DbPortfolioManager(load_settings().app.db_path, user.id)
     portfolio = manager.load()
 
     return {
         "cash": str(portfolio.cash),
+        "commission_discount": str(manager.get_commission_discount()),
         "position_count": len(portfolio.positions),
         "total_cost": str(portfolio.total_cost()),
         "updated_at": portfolio.updated_at.isoformat(sep=" ", timespec="seconds"),
@@ -75,10 +228,10 @@ async def get_portfolio(storage_path: str = Query("data/portfolio.json")) -> dic
 
 
 @router.post("/portfolio/import")
-async def import_portfolio(payload: PortfolioImportPayload) -> dict[str, object]:
+async def import_portfolio(payload: PortfolioImportPayload, user: CurrentUser = Depends(_current_user)) -> dict[str, object]:
     """Import portfolio positions from a CSV file."""
 
-    manager = PortfolioManager(storage_path=payload.storage_path)
+    manager = DbPortfolioManager(load_settings().app.db_path, user.id)
     cash_value = None if payload.cash is None or payload.cash == "" else Decimal(payload.cash)
     try:
         portfolio = manager.import_csv(payload.csv_path, cash=cash_value)
@@ -92,10 +245,10 @@ async def import_portfolio(payload: PortfolioImportPayload) -> dict[str, object]
 
 
 @router.post("/portfolio/cash")
-async def update_portfolio_cash(payload: PortfolioCashPayload) -> dict[str, object]:
+async def update_portfolio_cash(payload: PortfolioCashPayload, user: CurrentUser = Depends(_current_user)) -> dict[str, object]:
     """Update portfolio cash from the Web UI."""
 
-    manager = PortfolioManager(storage_path=payload.storage_path)
+    manager = DbPortfolioManager(load_settings().app.db_path, user.id)
     try:
         portfolio = manager.set_cash(Decimal(payload.cash))
     except Exception as exc:
@@ -103,11 +256,26 @@ async def update_portfolio_cash(payload: PortfolioCashPayload) -> dict[str, obje
     return _portfolio_payload(manager, portfolio)
 
 
+@router.post("/portfolio/commission")
+async def update_portfolio_commission(
+    payload: PortfolioCommissionPayload,
+    user: CurrentUser = Depends(_current_user),
+) -> dict[str, object]:
+    """Update commission discount from the Web UI."""
+
+    manager = DbPortfolioManager(load_settings().app.db_path, user.id)
+    try:
+        portfolio = manager.set_commission_discount(Decimal(payload.commission_discount))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _portfolio_payload(manager, portfolio)
+
+
 @router.post("/portfolio/positions")
-async def add_portfolio_position(payload: PortfolioPositionPayload) -> dict[str, object]:
+async def add_portfolio_position(payload: PortfolioPositionPayload, user: CurrentUser = Depends(_current_user)) -> dict[str, object]:
     """Add a portfolio position from the Web UI."""
 
-    manager = PortfolioManager(storage_path=payload.storage_path)
+    manager = DbPortfolioManager(load_settings().app.db_path, user.id)
     try:
         portfolio = manager.add_position(payload.symbol, payload.qty, Decimal(payload.avg_cost))
     except ValueError as exc:
@@ -118,10 +286,14 @@ async def add_portfolio_position(payload: PortfolioPositionPayload) -> dict[str,
 
 
 @router.put("/portfolio/positions/{symbol}")
-async def update_portfolio_position(symbol: str, payload: PortfolioPositionPayload) -> dict[str, object]:
+async def update_portfolio_position(
+    symbol: str,
+    payload: PortfolioPositionPayload,
+    user: CurrentUser = Depends(_current_user),
+) -> dict[str, object]:
     """Update an existing portfolio position from the Web UI."""
 
-    manager = PortfolioManager(storage_path=payload.storage_path)
+    manager = DbPortfolioManager(load_settings().app.db_path, user.id)
     try:
         portfolio = manager.update_position(symbol, payload.qty, Decimal(payload.avg_cost))
     except KeyError as exc:
@@ -132,10 +304,14 @@ async def update_portfolio_position(symbol: str, payload: PortfolioPositionPaylo
 
 
 @router.delete("/portfolio/positions/{symbol}")
-async def delete_portfolio_position(symbol: str, payload: PortfolioDeletePayload) -> dict[str, object]:
+async def delete_portfolio_position(
+    symbol: str,
+    payload: PortfolioDeletePayload,
+    user: CurrentUser = Depends(_current_user),
+) -> dict[str, object]:
     """Delete an existing portfolio position from the Web UI."""
 
-    manager = PortfolioManager(storage_path=payload.storage_path)
+    manager = DbPortfolioManager(load_settings().app.db_path, user.id)
     try:
         portfolio = manager.delete_position(symbol)
     except KeyError as exc:
@@ -144,10 +320,10 @@ async def delete_portfolio_position(symbol: str, payload: PortfolioDeletePayload
 
 
 @router.post("/portfolio/quotes")
-async def update_portfolio_quotes(payload: PortfolioQuotePayload) -> dict[str, object]:
+async def update_portfolio_quotes(payload: PortfolioQuotePayload, user: CurrentUser = Depends(_current_user)) -> dict[str, object]:
     """Fetch quotes for portfolio positions and return calculated PnL rows."""
 
-    manager = PortfolioManager(storage_path=payload.storage_path)
+    manager = DbPortfolioManager(load_settings().app.db_path, user.id)
     portfolio = manager.load()
     settings = load_settings()
     fetcher = create_fetcher(settings)
@@ -166,7 +342,7 @@ async def update_portfolio_quotes(payload: PortfolioQuotePayload) -> dict[str, o
 
 
 def _portfolio_payload(
-    manager: PortfolioManager,
+    manager: DbPortfolioManager,
     portfolio: Portfolio,
     *,
     quotes: dict | None = None,
@@ -174,6 +350,7 @@ def _portfolio_payload(
 ) -> dict[str, object]:
     return {
         "cash": str(portfolio.cash),
+        "commission_discount": str(manager.get_commission_discount()),
         "position_count": len(portfolio.positions),
         "total_cost": str(portfolio.total_cost()),
         "updated_at": portfolio.updated_at.isoformat(sep=" ", timespec="seconds"),
@@ -182,7 +359,7 @@ def _portfolio_payload(
 
 
 @router.post("/analyze")
-async def analyze(payload: AnalyzePayload) -> dict[str, object]:
+async def analyze(payload: AnalyzePayload, user: CurrentUser = Depends(_current_user)) -> dict[str, object]:
     """Run a single analysis cycle and return structured recommendations."""
 
     settings = load_settings()
@@ -193,7 +370,7 @@ async def analyze(payload: AnalyzePayload) -> dict[str, object]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     repo = AdvisorRepository(settings.app.db_path)
-    portfolio = PortfolioManager(storage_path=payload.storage_path).load()
+    portfolio = DbPortfolioManager(settings.app.db_path, user.id).load()
     ai_portfolio = _select_ai_portfolio(
         portfolio,
         include_portfolio=payload.include_portfolio,
@@ -238,7 +415,11 @@ async def analyze(payload: AnalyzePayload) -> dict[str, object]:
 
     try:
         request = await _collect_inputs()
-        response = await analyzer.analyze(request)
+        usage_token = set_token_usage_user(user.id)
+        try:
+            response = await analyzer.analyze(request)
+        finally:
+            reset_token_usage_user(usage_token)
     except (FetcherError, SymbolNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -270,9 +451,9 @@ async def analyze(payload: AnalyzePayload) -> dict[str, object]:
             }
         )
 
-    total_equity = repo.save_portfolio_snapshot(portfolio, request.quotes)
+    total_equity = repo.save_portfolio_snapshot(portfolio, request.quotes, user_id=user.id)
     repo.upsert_performance_daily(total_equity)
-    repo.save_recommendations(response.recommendations, response.market_view, response.warnings)
+    repo.save_recommendations(response.recommendations, response.market_view, response.warnings, user_id=user.id)
 
     return {
         "market_view": response.market_view,
@@ -304,20 +485,20 @@ def _format_lots(qty: int) -> str:
 
 
 @router.post("/screener/daytrade")
-async def screener_daytrade(payload: ScreenerPayload) -> dict[str, object]:
+async def screener_daytrade(payload: ScreenerPayload, user: CurrentUser = Depends(_current_user)) -> dict[str, object]:
     """Run a market-wide day-trade scan."""
 
-    return await _run_screener("daytrade", payload)
+    return await _run_screener("daytrade", payload, user)
 
 
 @router.post("/screener/swing")
-async def screener_swing(payload: ScreenerPayload) -> dict[str, object]:
+async def screener_swing(payload: ScreenerPayload, user: CurrentUser = Depends(_current_user)) -> dict[str, object]:
     """Run a market-wide swing scan."""
 
-    return await _run_screener("swing", payload)
+    return await _run_screener("swing", payload, user)
 
 
-async def _run_screener(source: str, payload: ScreenerPayload) -> dict[str, object]:
+async def _run_screener(source: str, payload: ScreenerPayload, user: CurrentUser) -> dict[str, object]:
     settings = load_settings()
     cache_ttl = timedelta(minutes=settings.screener.cache_ttl_minutes)
     cache_key = (
@@ -336,7 +517,7 @@ async def _run_screener(source: str, payload: ScreenerPayload) -> dict[str, obje
         analyzer = create_analyzer(settings)
     except ValueError:
         analyzer = None
-    portfolio = PortfolioManager(storage_path=payload.storage_path).load()
+    portfolio = DbPortfolioManager(settings.app.db_path, user.id).load()
     exclude_symbols = {position.symbol for position in portfolio.positions} if payload.exclude_holdings else set()
     pipeline = ScreenerPipeline(fetcher, TwseFetcher(), analyzer, settings.screener)
 
@@ -402,7 +583,7 @@ def _serialize_screen_result(result) -> dict[str, object]:
 
 
 @router.get("/report")
-async def report(period: str = Query("30d")) -> dict[str, object]:
+async def report(period: str = Query("30d"), user: CurrentUser = Depends(_current_user)) -> dict[str, object]:
     """Return stored performance metrics."""
 
     settings = load_settings()
@@ -424,12 +605,12 @@ async def report(period: str = Query("30d")) -> dict[str, object]:
 
 
 @router.post("/backtest")
-async def backtest(payload: BacktestPayload) -> dict[str, object]:
+async def backtest(payload: BacktestPayload, user: CurrentUser = Depends(_current_user)) -> dict[str, object]:
     """Run a historical backtest and return summary metrics."""
 
     settings = load_settings()
     fetcher = create_fetcher(settings)
-    portfolio = PortfolioManager(storage_path=payload.storage_path).load()
+    portfolio = DbPortfolioManager(settings.app.db_path, user.id).load()
     symbols = payload.symbols or [position.symbol for position in portfolio.positions] or ["2330"]
     engine = BacktestEngine(initial_cash=Decimal(payload.initial_cash))
 

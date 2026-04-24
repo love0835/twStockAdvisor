@@ -3,12 +3,31 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from twadvisor.screener.base import RankedRecommendation, ScreenResult
+from twadvisor.settings import load_settings
 from twadvisor.web.app import create_app
 from twadvisor.web.routes import _SCREENER_CACHE
+
+
+def _settings(tmp_path: Path):
+    default_path = tmp_path / "default.toml"
+    default_path.write_text(
+        f"[app]\ndb_path = \"{str(tmp_path / 'advisor.db').replace(chr(92), '/')}\"\n",
+        encoding="utf-8",
+    )
+    return load_settings(default_path=default_path, user_path=tmp_path / "missing.toml")
+
+
+def _login(client: TestClient) -> None:
+    response = client.post(
+        "/api/auth/initial-admin",
+        json={"username": "admin", "password": "password123", "display_name": "Admin"},
+    )
+    assert response.status_code == 200
 
 
 class FakePipeline:
@@ -56,18 +75,20 @@ class FakePipeline:
         return await self.run_daytrade(**kwargs)
 
 
-def test_screener_daytrade_endpoint_returns_recommendations(monkeypatch) -> None:
+def test_screener_daytrade_endpoint_returns_recommendations(tmp_path: Path, monkeypatch) -> None:
     """Daytrade scanner endpoint should serialize ranked recommendations."""
 
     _SCREENER_CACHE.clear()
     FakePipeline.calls = 0
     FakePipeline.empty = False
+    monkeypatch.setattr("twadvisor.web.routes.load_settings", lambda: _settings(tmp_path))
     monkeypatch.setattr("twadvisor.web.routes.create_fetcher", lambda settings: object())
     monkeypatch.setattr("twadvisor.web.routes.create_analyzer", lambda settings: object())
     monkeypatch.setattr("twadvisor.web.routes.TwseFetcher", lambda: object())
     monkeypatch.setattr("twadvisor.web.routes.ScreenerPipeline", FakePipeline)
 
     client = TestClient(create_app())
+    _login(client)
     response = client.post("/api/screener/daytrade", json={"top_n": 5, "storage_path": "missing.json"})
 
     assert response.status_code == 200
@@ -77,17 +98,19 @@ def test_screener_daytrade_endpoint_returns_recommendations(monkeypatch) -> None
     assert payload["candidates_after_rules"] == 1
 
 
-def test_screener_empty_candidates_return_warning(monkeypatch) -> None:
+def test_screener_empty_candidates_return_warning(tmp_path: Path, monkeypatch) -> None:
     """Empty markets should return 200 with a warning."""
 
     _SCREENER_CACHE.clear()
     FakePipeline.empty = True
+    monkeypatch.setattr("twadvisor.web.routes.load_settings", lambda: _settings(tmp_path))
     monkeypatch.setattr("twadvisor.web.routes.create_fetcher", lambda settings: object())
     monkeypatch.setattr("twadvisor.web.routes.create_analyzer", lambda settings: object())
     monkeypatch.setattr("twadvisor.web.routes.TwseFetcher", lambda: object())
     monkeypatch.setattr("twadvisor.web.routes.ScreenerPipeline", FakePipeline)
 
     client = TestClient(create_app())
+    _login(client)
     response = client.post("/api/screener/daytrade", json={"top_n": 5, "storage_path": "missing.json"})
 
     assert response.status_code == 200
@@ -95,18 +118,20 @@ def test_screener_empty_candidates_return_warning(monkeypatch) -> None:
     assert response.json()["warnings"] == ["無候選股"]
 
 
-def test_screener_endpoint_uses_cache(monkeypatch) -> None:
+def test_screener_endpoint_uses_cache(tmp_path: Path, monkeypatch) -> None:
     """Repeated identical requests should return from the 10-minute cache."""
 
     _SCREENER_CACHE.clear()
     FakePipeline.calls = 0
     FakePipeline.empty = False
+    monkeypatch.setattr("twadvisor.web.routes.load_settings", lambda: _settings(tmp_path))
     monkeypatch.setattr("twadvisor.web.routes.create_fetcher", lambda settings: object())
     monkeypatch.setattr("twadvisor.web.routes.create_analyzer", lambda settings: object())
     monkeypatch.setattr("twadvisor.web.routes.TwseFetcher", lambda: object())
     monkeypatch.setattr("twadvisor.web.routes.ScreenerPipeline", FakePipeline)
 
     client = TestClient(create_app())
+    _login(client)
     first = client.post("/api/screener/daytrade", json={"top_n": 5, "storage_path": "missing.json"})
     second = client.post("/api/screener/daytrade", json={"top_n": 5, "storage_path": "missing.json"})
 

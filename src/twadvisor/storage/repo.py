@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 
 from twadvisor.models import Portfolio, Quote, Recommendation
 from twadvisor.storage.db import create_session_factory
@@ -27,13 +27,33 @@ class AdvisorRepository:
 
         self.session_factory = create_session_factory(db_path)
         Base.metadata.create_all(self.session_factory.kw["bind"])
+        self._ensure_legacy_columns()
 
-    def record_token_usage(self, provider: str, model: str, prompt_tokens: int, completion_tokens: int) -> None:
+    def _ensure_legacy_columns(self) -> None:
+        """Add nullable user columns to existing SQLite tables when upgrading."""
+
+        engine = self.session_factory.kw["bind"]
+        with engine.begin() as connection:
+            for table in ("recommendations", "portfolio_snapshots", "token_usage"):
+                columns = [row[1] for row in connection.execute(text(f"PRAGMA table_info({table})"))]
+                if columns and "user_id" not in columns:
+                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER"))
+
+    def record_token_usage(
+        self,
+        provider: str,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        *,
+        user_id: int | None = None,
+    ) -> None:
         """Persist token usage."""
 
         with self.session_factory() as session:
             session.add(
                 TokenUsageRecord(
+                    user_id=user_id,
                     provider=provider,
                     model=model,
                     prompt_tokens=prompt_tokens,
@@ -43,13 +63,21 @@ class AdvisorRepository:
             )
             session.commit()
 
-    def save_recommendations(self, recs: list[Recommendation], market_view: str, warnings: list[str]) -> None:
+    def save_recommendations(
+        self,
+        recs: list[Recommendation],
+        market_view: str,
+        warnings: list[str],
+        *,
+        user_id: int | None = None,
+    ) -> None:
         """Persist validated recommendations."""
 
         with self.session_factory() as session:
             for rec in recs:
                 session.add(
                     RecommendationRecord(
+                        user_id=user_id,
                         symbol=rec.symbol,
                         action=rec.action.value,
                         qty=rec.qty,
@@ -64,7 +92,13 @@ class AdvisorRepository:
                 )
             session.commit()
 
-    def save_portfolio_snapshot(self, portfolio: Portfolio, quotes: dict[str, Quote]) -> Decimal:
+    def save_portfolio_snapshot(
+        self,
+        portfolio: Portfolio,
+        quotes: dict[str, Quote],
+        *,
+        user_id: int | None = None,
+    ) -> Decimal:
         """Persist a portfolio snapshot and return total equity."""
 
         equity = portfolio.cash
@@ -76,6 +110,7 @@ class AdvisorRepository:
         with self.session_factory() as session:
             session.add(
                 PortfolioSnapshotRecord(
+                    user_id=user_id,
                     snapshot_date=datetime.utcnow().date().isoformat(),
                     cash=str(portfolio.cash),
                     total_equity=str(equity),
@@ -132,3 +167,27 @@ class AdvisorRepository:
 
         with self.session_factory() as session:
             return len(list(session.scalars(select(TokenUsageRecord))))
+
+    def list_token_usage_by_user(self) -> list[dict[str, object]]:
+        """Return token usage totals grouped by user id."""
+
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(
+                    TokenUsageRecord.user_id,
+                    TokenUsageRecord.provider,
+                    func.sum(TokenUsageRecord.prompt_tokens),
+                    func.sum(TokenUsageRecord.completion_tokens),
+                    func.count(TokenUsageRecord.id),
+                ).group_by(TokenUsageRecord.user_id, TokenUsageRecord.provider)
+            )
+            return [
+                {
+                    "user_id": row[0],
+                    "provider": row[1],
+                    "prompt_tokens": int(row[2] or 0),
+                    "completion_tokens": int(row[3] or 0),
+                    "runs": int(row[4] or 0),
+                }
+                for row in rows
+            ]

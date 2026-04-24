@@ -15,6 +15,37 @@ class AnalyzePayload(BaseModel):
     storage_path: str = "data/portfolio.json"
 
 
+class LoginPayload(BaseModel):
+    """Request body for login."""
+
+    username: str
+    password: str
+
+
+class CreateInitialAdminPayload(BaseModel):
+    """Request body for first-run admin creation."""
+
+    username: str
+    password: str
+    display_name: str | None = None
+
+
+class UserCreatePayload(BaseModel):
+    """Request body for admin-created family member."""
+
+    username: str
+    password: str
+    display_name: str | None = None
+    role: str = "member"
+
+
+class PasswordChangePayload(BaseModel):
+    """Request body for changing own password."""
+
+    current_password: str
+    new_password: str
+
+
 class BacktestPayload(BaseModel):
     """Request body for historical backtest."""
 
@@ -38,6 +69,13 @@ class PortfolioCashPayload(BaseModel):
     """Request body for updating portfolio cash."""
 
     cash: str
+    storage_path: str = "data/portfolio.json"
+
+
+class PortfolioCommissionPayload(BaseModel):
+    """Request body for updating commission discount."""
+
+    commission_discount: str
     storage_path: str = "data/portfolio.json"
 
 

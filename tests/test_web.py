@@ -25,6 +25,23 @@ def _settings(tmp_path: Path):
     return load_settings(default_path=default_path, user_path=tmp_path / "missing.toml")
 
 
+def _login(client: TestClient) -> None:
+    response = client.post(
+        "/api/auth/initial-admin",
+        json={"username": "admin", "password": "password123", "display_name": "Admin"},
+    )
+    assert response.status_code == 200
+
+
+def test_auth_required_for_portfolio(tmp_path: Path, monkeypatch) -> None:
+    """Private API endpoints should require login."""
+
+    monkeypatch.setattr("twadvisor.web.routes.load_settings", lambda: _settings(tmp_path))
+    client = TestClient(create_app())
+    response = client.get("/api/portfolio")
+    assert response.status_code == 401
+
+
 def test_health_endpoint() -> None:
     """Health endpoint should report ok."""
 
@@ -67,6 +84,7 @@ def test_portfolio_import_and_read(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr("twadvisor.web.routes.create_fetcher", lambda settings: StubFetcher())
     client = TestClient(create_app())
+    _login(client)
     storage = str(tmp_path / "portfolio.json")
 
     import_response = client.post(
@@ -84,8 +102,9 @@ def test_portfolio_import_and_read(tmp_path: Path, monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["position_count"] == 2
-    assert payload["rows"][0]["symbol"] == "2330"
-    assert payload["rows"][0]["current_price"] == "尚未更新"
+    rows_by_symbol = {row["symbol"]: row for row in payload["rows"]}
+    assert "2330" in rows_by_symbol
+    assert rows_by_symbol["2330"]["current_price"] == "尚未更新"
 
     quote_response = client.post(
         "/api/portfolio/quotes",
@@ -93,8 +112,9 @@ def test_portfolio_import_and_read(tmp_path: Path, monkeypatch) -> None:
     )
     assert quote_response.status_code == 200
     quote_payload = quote_response.json()
-    assert quote_payload["rows"][0]["current_price"] == "600"
-    assert quote_payload["rows"][0]["unrealized_pnl"] == "17729.18"
+    quote_rows_by_symbol = {row["symbol"]: row for row in quote_payload["rows"]}
+    assert quote_rows_by_symbol["2330"]["current_price"] == "600"
+    assert quote_rows_by_symbol["2330"]["unrealized_pnl"] == "17729.18"
 
 
 def test_portfolio_management_endpoints(tmp_path: Path, monkeypatch) -> None:
@@ -102,6 +122,7 @@ def test_portfolio_management_endpoints(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr("twadvisor.web.routes.load_settings", lambda: _settings(tmp_path))
     client = TestClient(create_app())
+    _login(client)
     storage = str(tmp_path / "portfolio.json")
 
     cash_response = client.post("/api/portfolio/cash", json={"cash": "300000", "storage_path": storage})
@@ -146,6 +167,7 @@ def test_report_endpoint(tmp_path: Path, monkeypatch) -> None:
     repo.upsert_performance_daily(Decimal("100000"))
 
     client = TestClient(create_app())
+    _login(client)
     response = client.get("/api/report", params={"period": "30d"})
     assert response.status_code == 200
     assert response.json()["days"] == 1
@@ -173,6 +195,7 @@ def test_backtest_endpoint(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr("twadvisor.web.routes.create_fetcher", lambda settings: StubFetcher())
     client = TestClient(create_app())
+    _login(client)
     response = client.post(
         "/api/backtest",
         json={
@@ -196,6 +219,7 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("twadvisor.web.routes.load_settings", lambda: settings)
     storage = tmp_path / "portfolio.json"
     client = TestClient(create_app())
+    _login(client)
     client.post(
         "/api/portfolio/import",
         json={

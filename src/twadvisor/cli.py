@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from twadvisor.analyzer.factory import create_analyzer
+from twadvisor.auth import AuthService
 from twadvisor.backtest.engine import BacktestEngine
 from twadvisor.constants import (
     APP_NAME,
@@ -26,6 +27,7 @@ from twadvisor.indicators.technical import compute_indicators
 from twadvisor.models import AnalysisRequest, Strategy
 from twadvisor.notifier.factory import create_notifier
 from twadvisor.portfolio.manager import PortfolioManager
+from twadvisor.portfolio.db_manager import DbPortfolioManager
 from twadvisor.performance.metrics import cumulative_pnl, max_drawdown, sharpe_ratio, win_rate
 from twadvisor.risk.validators import ValidationError, validate_recommendation
 from twadvisor.scheduler.runner import AdvisorRunner
@@ -36,8 +38,12 @@ from twadvisor.storage.repo import AdvisorRepository
 app = typer.Typer(help="Taiwan stock AI advisor")
 keys_app = typer.Typer(help="Manage API keys and secrets")
 portfolio_app = typer.Typer(help="Manage portfolio holdings")
+users_app = typer.Typer(help="Manage family user accounts")
+migrate_app = typer.Typer(help="Migrate local data")
 app.add_typer(keys_app, name="keys")
 app.add_typer(portfolio_app, name="portfolio")
+app.add_typer(users_app, name="users")
+app.add_typer(migrate_app, name="migrate")
 console = Console()
 
 CONFIG_TEMPLATE_SOURCE = Path(__file__).resolve().parents[2] / DEFAULT_CONFIG_PATH
@@ -206,6 +212,91 @@ def portfolio_show(
         )
     console.print(table)
     console.print(f"Cash: {portfolio.cash}")
+
+
+@users_app.command("create-admin")
+def users_create_admin(
+    username: str = typer.Option(..., "--username", prompt=True),
+    display_name: str | None = typer.Option(None, "--display-name"),
+    password: str | None = typer.Option(None, "--password", hide_input=True),
+) -> None:
+    """Create the first admin account."""
+
+    _render_disclaimer()
+    settings = load_settings()
+    service = AuthService(settings.app.db_path)
+    if service.has_admin():
+        console.print("Admin already exists", style="yellow")
+        raise typer.Exit(code=1)
+    secret = password if password is not None else typer.prompt("Password", hide_input=True, confirmation_prompt=True)
+    try:
+        service.create_user(username=username, password=secret, display_name=display_name, role="admin")
+    except ValueError as exc:
+        console.print(str(exc), style="red")
+        raise typer.Exit(code=1)
+    console.print(f"Created admin: {username}", style="green")
+
+
+@users_app.command("create")
+def users_create(
+    username: str = typer.Option(..., "--username", prompt=True),
+    display_name: str | None = typer.Option(None, "--display-name"),
+    role: str = typer.Option("member", "--role"),
+    password: str | None = typer.Option(None, "--password", hide_input=True),
+) -> None:
+    """Create a family member account."""
+
+    _render_disclaimer()
+    settings = load_settings()
+    secret = password if password is not None else typer.prompt("Password", hide_input=True, confirmation_prompt=True)
+    try:
+        AuthService(settings.app.db_path).create_user(
+            username=username,
+            password=secret,
+            display_name=display_name,
+            role=role,
+        )
+    except ValueError as exc:
+        console.print(str(exc), style="red")
+        raise typer.Exit(code=1)
+    console.print(f"Created user: {username}", style="green")
+
+
+@users_app.command("reset-password")
+def users_reset_password(
+    username: str = typer.Option(..., "--username", prompt=True),
+    password: str | None = typer.Option(None, "--password", hide_input=True),
+) -> None:
+    """Reset a family member password."""
+
+    _render_disclaimer()
+    settings = load_settings()
+    secret = password if password is not None else typer.prompt("New password", hide_input=True, confirmation_prompt=True)
+    try:
+        AuthService(settings.app.db_path).reset_password(username, secret)
+    except (KeyError, ValueError) as exc:
+        console.print(str(exc), style="red")
+        raise typer.Exit(code=1)
+    console.print(f"Password reset: {username}", style="green")
+
+
+@migrate_app.command("portfolio-json")
+def migrate_portfolio_json(
+    username: str = typer.Option(..., "--user", help="Target username"),
+    storage: Path = typer.Option(Path(DEFAULT_PORTFOLIO_PATH), "--storage", help="Source JSON portfolio path"),
+) -> None:
+    """Migrate a JSON portfolio into a DB-backed user portfolio."""
+
+    _render_disclaimer()
+    settings = load_settings()
+    service = AuthService(settings.app.db_path)
+    users = {entry["username"]: entry for entry in service.list_users()}
+    user = users.get(username)
+    if user is None:
+        console.print(f"User not found: {username}", style="red")
+        raise typer.Exit(code=1)
+    portfolio = DbPortfolioManager(settings.app.db_path, int(user["id"])).import_from_json(str(storage))
+    console.print(f"Migrated {len(portfolio.positions)} positions to {username}", style="green")
 
 
 @app.command()

@@ -7,7 +7,26 @@
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <div class="app-shell">
+    <section class="auth-screen" id="auth-screen">
+      <div class="auth-card">
+        <h1>TwStockAdvisor</h1>
+        <p id="auth-subtitle">家庭會員登入</p>
+        <form id="login-form" class="auth-form">
+          <label><span>帳號</span><input name="username" autocomplete="username" /></label>
+          <label><span>密碼</span><input name="password" type="password" autocomplete="current-password" /></label>
+          <button type="submit" class="primary-btn">登入</button>
+        </form>
+        <form id="initial-admin-form" class="auth-form hidden">
+          <label><span>管理員帳號</span><input name="username" value="admin" autocomplete="username" /></label>
+          <label><span>顯示名稱</span><input name="display_name" value="管理員" /></label>
+          <label><span>管理員密碼</span><input name="password" type="password" autocomplete="new-password" /></label>
+          <button type="submit" class="primary-btn">建立第一個管理員</button>
+        </form>
+        <div class="result-box" id="auth-result"></div>
+      </div>
+    </section>
+
+    <div class="app-shell hidden" id="app-shell">
       <aside class="sidebar">
         <div class="brand">
           <div class="brand-mark">TW</div>
@@ -21,6 +40,7 @@
           <button class="nav-btn" data-panel="analyze">分析</button>
           <button class="nav-btn" data-panel="report">績效</button>
           <button class="nav-btn" data-panel="backtest">回測</button>
+          <button class="nav-btn hidden" data-panel="admin" id="admin-nav-btn">Usage</button>
         </nav>
       </aside>
 
@@ -30,7 +50,12 @@
             <h2 id="panel-title">持倉</h2>
             <p id="panel-subtitle">管理持倉、現金、手續費折讓與未實現損益</p>
           </div>
-          <div class="status-pill" id="health-pill">API 連線中</div>
+          <div class="topbar-actions">
+            <div class="status-pill" id="current-user-pill">未登入</div>
+            <button class="secondary-btn compact-btn" id="change-password-btn">改密碼</button>
+            <button class="secondary-btn compact-btn" id="logout-btn">登出</button>
+            <div class="status-pill" id="health-pill">API 連線中</div>
+          </div>
         </header>
 
         <section class="grid" id="portfolio-panel">
@@ -42,16 +67,13 @@
             <div class="stats" id="portfolio-stats"></div>
             <div class="portfolio-tools">
               <form id="cash-form" class="inline-form">
-                <label>
-                  <span>現金</span>
-                  <input name="cash" id="portfolio-cash-input" inputmode="decimal" />
-                </label>
+                <label><span>現金</span><input name="cash" id="portfolio-cash-input" inputmode="decimal" /></label>
                 <button type="submit" class="secondary-btn">更新現金</button>
               </form>
-              <label>
-                <span>手續費折讓</span>
-                <input id="commission-discount" value="0.28" inputmode="decimal" />
-              </label>
+              <form id="commission-form" class="inline-form">
+                <label><span>手續費折讓</span><input name="commission_discount" id="commission-discount" value="0.28" inputmode="decimal" /></label>
+                <button type="submit" class="secondary-btn">儲存折讓</button>
+              </form>
               <button class="primary-btn" id="update-quotes-btn">更新現價與損益</button>
             </div>
             <div class="selection-bar">
@@ -64,15 +86,8 @@
               <table id="portfolio-table">
                 <thead>
                   <tr>
-                    <th>選取</th>
-                    <th>股票</th>
-                    <th>股數</th>
-                    <th>均價</th>
-                    <th>含手續費成本</th>
-                    <th>現價</th>
-                    <th>未實現損益</th>
-                    <th>報酬率</th>
-                    <th>操作</th>
+                    <th>選取</th><th>股票</th><th>股數</th><th>均價</th><th>含手續費成本</th>
+                    <th>現價</th><th>未實現損益</th><th>報酬率</th><th>操作</th>
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -82,22 +97,14 @@
           </section>
 
           <section class="band">
-            <div class="section-head">
-              <h3>持倉 AI 分析結果</h3>
-            </div>
+            <div class="section-head"><h3>持倉 AI 分析結果</h3></div>
             <div class="market-view" id="portfolio-ai-view">尚未執行</div>
             <div class="table-wrap">
               <table id="portfolio-ai-table">
                 <thead>
                   <tr>
-                    <th>股票</th>
-                    <th>動作</th>
-                    <th>張數 / 股數</th>
-                    <th>下單價</th>
-                    <th>停損</th>
-                    <th>停利</th>
-                    <th>警示</th>
-                    <th>理由</th>
+                    <th>股票</th><th>動作</th><th>張數 / 股數</th><th>下單價</th>
+                    <th>停損</th><th>停利</th><th>警示</th><th>理由</th>
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -107,43 +114,21 @@
           </section>
 
           <section class="band">
-            <div class="section-head">
-              <h3>新增持倉</h3>
-            </div>
+            <div class="section-head"><h3>新增持倉</h3></div>
             <form id="position-form" class="form-grid">
-              <label>
-                <span>股票代號</span>
-                <input name="symbol" placeholder="例如 2330" />
-              </label>
-              <label>
-                <span>股數</span>
-                <input name="qty" inputmode="numeric" placeholder="例如 1000" />
-              </label>
-              <label>
-                <span>均價</span>
-                <input name="avg_cost" inputmode="decimal" placeholder="例如 580" />
-              </label>
+              <label><span>股票代號</span><input name="symbol" placeholder="例如 2330" /></label>
+              <label><span>股數</span><input name="qty" inputmode="numeric" placeholder="例如 1000" /></label>
+              <label><span>均價</span><input name="avg_cost" inputmode="decimal" placeholder="例如 580" /></label>
               <button type="submit" class="primary-btn">新增持倉</button>
             </form>
           </section>
 
           <section class="band">
-            <div class="section-head">
-              <h3>匯入持倉</h3>
-            </div>
+            <div class="section-head"><h3>匯入持倉</h3></div>
             <form id="portfolio-import-form" class="form-grid">
-              <label>
-                <span>CSV 路徑</span>
-                <input name="csv_path" value="E:/TwStockAdvisor/data/taishin_portfolio.csv" />
-              </label>
-              <label>
-                <span>現金</span>
-                <input name="cash" value="260576.0" />
-              </label>
-              <label>
-                <span>儲存位置</span>
-                <input name="storage_path" value="data/portfolio.json" />
-              </label>
+              <label><span>CSV 路徑</span><input name="csv_path" value="E:/TwStockAdvisor/data/taishin_portfolio.csv" /></label>
+              <label><span>現金</span><input name="cash" value="260576.0" /></label>
+              <label><span>儲存位置</span><input name="storage_path" value="data/portfolio.json" /></label>
               <button type="submit" class="primary-btn">匯入</button>
             </form>
             <div class="result-box" id="portfolio-import-result"></div>
@@ -152,9 +137,7 @@
 
         <section class="grid hidden" id="analyze-panel">
           <section class="band">
-            <div class="section-head">
-              <h3>單次分析</h3>
-            </div>
+            <div class="section-head"><h3>單次分析</h3></div>
             <form id="analyze-form" class="form-grid">
               <label>
                 <span>策略</span>
@@ -166,43 +149,23 @@
                   <option value="dividend">存股 / 股息策略</option>
                 </select>
               </label>
-              <label>
-                <span>觀察清單</span>
-                <input name="watchlist" value="2330" />
-              </label>
-              <label>
-                <span>持倉檔案</span>
-                <input name="storage_path" value="data/portfolio.json" />
-              </label>
-              <label class="checkbox">
-                <input type="checkbox" name="include_portfolio" />
-                <span>參考持倉與現金</span>
-              </label>
+              <label><span>觀察清單</span><input name="watchlist" value="2330" /></label>
+              <label><span>持倉檔案</span><input name="storage_path" value="data/portfolio.json" /></label>
+              <label class="checkbox"><input type="checkbox" name="include_portfolio" /><span>參考持倉與現金</span></label>
               <button type="submit" class="primary-btn">執行分析</button>
             </form>
           </section>
 
           <section class="band">
-            <div class="section-head">
-              <h3>市場掃描・AI 推薦</h3>
-            </div>
+            <div class="section-head"><h3>市場掃描・AI 推薦</h3></div>
             <div class="scanner-common">
-              <label>
-                <span>推薦檔數</span>
-                <input type="number" id="scanner-top-n" value="5" min="1" max="20" />
-              </label>
-              <label class="checkbox">
-                <input type="checkbox" id="scanner-exclude-holdings" checked />
-                <span>排除已持有</span>
-              </label>
+              <label><span>推薦檔數</span><input type="number" id="scanner-top-n" value="5" min="1" max="20" /></label>
+              <label class="checkbox"><input type="checkbox" id="scanner-exclude-holdings" checked /><span>排除已持有</span></label>
             </div>
             <div class="scanner-actions">
               <div class="scanner-block">
                 <div class="scanner-block-head">當沖推薦</div>
-                <label class="checkbox">
-                  <input type="checkbox" id="scanner-exclude-etf" checked />
-                  <span>排除 ETF / ETN / 槓反</span>
-                </label>
+                <label class="checkbox"><input type="checkbox" id="scanner-exclude-etf" checked /><span>排除 ETF / ETN / 槓反</span></label>
                 <button class="primary-btn" id="scan-daytrade-btn">掃描當沖標的</button>
               </div>
               <div class="scanner-block">
@@ -210,12 +173,8 @@
                 <label>
                   <span>外資連買天數</span>
                   <select id="scanner-foreign-days">
-                    <option value="0">不要求</option>
-                    <option value="2">連 2 日</option>
-                    <option value="3" selected>連 3 日</option>
-                    <option value="5">連 5 日</option>
-                    <option value="7">連 7 日</option>
-                    <option value="10">連 10 日</option>
+                    <option value="0">不要求</option><option value="2">連 2 日</option><option value="3" selected>連 3 日</option>
+                    <option value="5">連 5 日</option><option value="7">連 7 日</option><option value="10">連 10 日</option>
                   </select>
                 </label>
                 <button class="primary-btn" id="scan-swing-btn">掃描短線標的</button>
@@ -224,48 +183,24 @@
             <div class="scanner-meta" id="scanner-meta">尚未掃描</div>
             <div class="table-wrap">
               <table id="scanner-table">
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>股票</th>
-                    <th>信心</th>
-                    <th>進場區間</th>
-                    <th>停損</th>
-                    <th>停利</th>
-                    <th>理由</th>
-                  </tr>
-                </thead>
+                <thead><tr><th>#</th><th>股票</th><th>信心</th><th>進場區間</th><th>停損</th><th>停利</th><th>理由</th></tr></thead>
                 <tbody></tbody>
               </table>
             </div>
             <div class="scanner-decision-actions">
-              <label class="checkbox">
-                <input type="checkbox" id="scanner-include-portfolio" />
-                <span>參考持倉與現金</span>
-              </label>
+              <label class="checkbox"><input type="checkbox" id="scanner-include-portfolio" /><span>參考持倉與現金</span></label>
               <button class="secondary-btn" id="scanner-ai-decision-btn" disabled>用 AI 做交易決策</button>
               <span id="scanner-decision-hint">請先掃描出候選標的</span>
             </div>
           </section>
 
           <section class="band">
-            <div class="section-head">
-              <h3>分析結果</h3>
-            </div>
+            <div class="section-head"><h3>分析結果</h3></div>
             <div class="market-view" id="market-view">尚未執行</div>
             <div class="table-wrap">
               <table id="analyze-table">
                 <thead>
-                  <tr>
-                    <th>股票</th>
-                    <th>動作</th>
-                    <th>張數 / 股數</th>
-                    <th>下單價</th>
-                    <th>停損</th>
-                    <th>停利</th>
-                    <th>警示</th>
-                    <th>理由</th>
-                  </tr>
+                  <tr><th>股票</th><th>動作</th><th>張數 / 股數</th><th>下單價</th><th>停損</th><th>停利</th><th>警示</th><th>理由</th></tr>
                 </thead>
                 <tbody></tbody>
               </table>
@@ -276,14 +211,9 @@
 
         <section class="grid hidden" id="report-panel">
           <section class="band">
-            <div class="section-head">
-              <h3>績效報告</h3>
-            </div>
+            <div class="section-head"><h3>績效報告</h3></div>
             <form id="report-form" class="inline-form">
-              <label>
-                <span>區間</span>
-                <input name="period" value="30d" />
-              </label>
+              <label><span>區間</span><input name="period" value="30d" /></label>
               <button type="submit" class="primary-btn">查詢</button>
             </form>
             <div class="stats" id="report-stats"></div>
@@ -292,9 +222,7 @@
 
         <section class="grid hidden" id="backtest-panel">
           <section class="band">
-            <div class="section-head">
-              <h3>歷史回測</h3>
-            </div>
+            <div class="section-head"><h3>歷史回測</h3></div>
             <form id="backtest-form" class="form-grid">
               <label>
                 <span>策略</span>
@@ -306,31 +234,42 @@
                   <option value="dividend">存股 / 股息策略</option>
                 </select>
               </label>
-              <label>
-                <span>股票</span>
-                <input name="symbols" value="2330,2317" />
-              </label>
-              <label>
-                <span>開始</span>
-                <input name="from_date" value="2024-01-01" />
-              </label>
-              <label>
-                <span>結束</span>
-                <input name="to_date" value="2024-12-31" />
-              </label>
-              <label>
-                <span>初始資金</span>
-                <input name="initial_cash" value="1000000" />
-              </label>
+              <label><span>股票</span><input name="symbols" value="2330,2317" /></label>
+              <label><span>開始</span><input name="from_date" value="2024-01-01" /></label>
+              <label><span>結束</span><input name="to_date" value="2024-12-31" /></label>
+              <label><span>初始資金</span><input name="initial_cash" value="1000000" /></label>
               <button type="submit" class="primary-btn">執行回測</button>
             </form>
           </section>
+          <section class="band">
+            <div class="section-head"><h3>回測結果</h3></div>
+            <div class="stats" id="backtest-stats"></div>
+          </section>
+        </section>
 
+        <section class="grid hidden" id="admin-panel">
           <section class="band">
             <div class="section-head">
-              <h3>回測結果</h3>
+              <h3>會員 AI 使用量</h3>
+              <button class="secondary-btn" id="refresh-usage-btn">重新整理</button>
             </div>
-            <div class="stats" id="backtest-stats"></div>
+            <div class="table-wrap">
+              <table id="usage-table">
+                <thead><tr><th>帳號</th><th>顯示名稱</th><th>Provider</th><th>次數</th><th>輸入 tokens</th><th>輸出 tokens</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="result-box" id="usage-result"></div>
+          </section>
+          <section class="band">
+            <div class="section-head"><h3>新增家人帳號</h3></div>
+            <form id="admin-create-user-form" class="form-grid">
+              <label><span>帳號</span><input name="username" placeholder="letters_numbers" /></label>
+              <label><span>顯示名稱</span><input name="display_name" placeholder="家人名稱" /></label>
+              <label><span>初始密碼</span><input name="password" type="password" /></label>
+              <button type="submit" class="primary-btn">新增會員</button>
+            </form>
+            <div class="result-box" id="admin-user-result"></div>
           </section>
         </section>
       </main>
