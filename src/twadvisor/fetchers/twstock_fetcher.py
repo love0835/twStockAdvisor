@@ -58,8 +58,11 @@ class TwstockFetcher(BaseFetcher):
         history = []
         cursor_year = start.year
         cursor_month = start.month
+        fetched_years: set[int] = set()
         while (cursor_year, cursor_month) <= (end.year, end.month):
-            history.extend(stock.fetch_from(cursor_year, cursor_month))
+            if cursor_year not in fetched_years:
+                history.extend(stock.fetch_from(cursor_year, cursor_month))
+                fetched_years.add(cursor_year)
             if cursor_month == 12:
                 cursor_year += 1
                 cursor_month = 1

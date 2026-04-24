@@ -13,6 +13,7 @@ from twadvisor.models import AnalysisResponse, ChipData, Quote, Recommendation, 
 from twadvisor.settings import load_settings
 from twadvisor.storage.repo import AdvisorRepository
 from twadvisor.web.app import create_app
+from twadvisor.web.routes import _ANALYZE_INPUT_CACHE
 
 
 def _settings(tmp_path: Path):
@@ -135,6 +136,7 @@ def test_backtest_endpoint(tmp_path: Path, monkeypatch) -> None:
 def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
     """Analyze endpoint should return structured recommendations."""
 
+    _ANALYZE_INPUT_CACHE.clear()
     settings = _settings(tmp_path)
     monkeypatch.setattr("twadvisor.web.routes.load_settings", lambda: settings)
     storage = tmp_path / "portfolio.json"
@@ -232,4 +234,15 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
     payload = response.json()
     assert payload["market_view"] == "區間震盪"
     assert payload["recommendations"][0]["symbol"] == "2330"
+    assert StubFetcher.calls == ["2330"]
+
+    second_response = client.post(
+        "/api/analyze",
+        json={
+            "strategy": "swing",
+            "watchlist": ["2330"],
+            "storage_path": str(storage),
+        },
+    )
+    assert second_response.status_code == 200
     assert StubFetcher.calls == ["2330"]

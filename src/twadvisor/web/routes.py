@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, Query
@@ -21,6 +21,8 @@ from twadvisor.storage.repo import AdvisorRepository
 from twadvisor.web.schemas import AnalyzePayload, BacktestPayload, PortfolioImportPayload
 
 router = APIRouter()
+_ANALYZE_INPUT_CACHE: dict[tuple[str, str, str], tuple[datetime, object, object]] = {}
+_ANALYZE_CACHE_TTL = timedelta(minutes=10)
 
 
 @router.get("/health")
@@ -98,7 +100,7 @@ async def analyze(payload: AnalyzePayload) -> dict[str, object]:
     repo = AdvisorRepository(settings.app.db_path)
     portfolio = PortfolioManager(storage_path=payload.storage_path).load()
     analysis_symbols = payload.watchlist or [position.symbol for position in portfolio.positions]
-    all_symbols = sorted({*analysis_symbols, *(position.symbol for position in portfolio.positions)})
+    all_symbols = sorted(set(analysis_symbols))
     if not all_symbols:
         raise HTTPException(status_code=400, detail="No symbols provided for analysis")
 
@@ -109,9 +111,17 @@ async def analyze(payload: AnalyzePayload) -> dict[str, object]:
         indicators = {}
         chips = {}
         for symbol in analysis_symbols:
+            cache_key = (symbol, str(start), str(today))
+            cached = _ANALYZE_INPUT_CACHE.get(cache_key)
+            if cached and datetime.utcnow() - cached[0] < _ANALYZE_CACHE_TTL:
+                indicators[symbol], chips[symbol] = cached[1], cached[2]
+                continue
             frame = await fetcher.get_kline(symbol, start=start, end=today)
-            indicators[symbol] = compute_indicators(frame, symbol)
-            chips[symbol] = await fetcher.get_chip(symbol, today)
+            indicator = compute_indicators(frame, symbol)
+            chip = await fetcher.get_chip(symbol, today)
+            indicators[symbol] = indicator
+            chips[symbol] = chip
+            _ANALYZE_INPUT_CACHE[cache_key] = (datetime.utcnow(), indicator, chip)
         return AnalysisRequest(
             strategy=Strategy(payload.strategy),
             portfolio=portfolio,
