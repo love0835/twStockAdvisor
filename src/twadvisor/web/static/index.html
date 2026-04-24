@@ -36,14 +36,21 @@
         <section class="grid" id="portfolio-panel">
           <section class="band">
             <div class="section-head">
-              <h3>持倉摘要</h3>
+              <h3>持倉概要</h3>
               <button class="icon-btn" id="refresh-portfolio" title="重新整理">↻</button>
             </div>
             <div class="stats" id="portfolio-stats"></div>
+            <div class="selection-bar">
+              <button class="secondary-btn" id="select-all-holdings">全選</button>
+              <button class="secondary-btn" id="clear-all-holdings">取消</button>
+              <button class="primary-btn" id="portfolio-ai-btn">用 AI 分析勾選持倉</button>
+              <span id="portfolio-ai-hint">已選 0 檔</span>
+            </div>
             <div class="table-wrap">
               <table id="portfolio-table">
                 <thead>
                   <tr>
+                    <th>選取</th>
                     <th>股票</th>
                     <th>股數</th>
                     <th>均價</th>
@@ -104,13 +111,17 @@
                 <span>持倉檔案</span>
                 <input name="storage_path" value="data/portfolio.json" />
               </label>
+              <label class="checkbox">
+                <input type="checkbox" name="include_portfolio" />
+                <span>參考持倉與現金</span>
+              </label>
               <button type="submit" class="primary-btn">執行分析</button>
             </form>
           </section>
 
           <section class="band">
             <div class="section-head">
-              <h3>市場掃描 · AI 推薦</h3>
+              <h3>市場掃描・AI 推薦</h3>
             </div>
             <div class="scanner-common">
               <label>
@@ -134,7 +145,7 @@
               <div class="scanner-block">
                 <div class="scanner-block-head">短線推薦</div>
                 <label>
-                  <span>外資連續買超天數</span>
+                  <span>外資連買天數</span>
                   <select id="scanner-foreign-days">
                     <option value="0">不要求</option>
                     <option value="2">連 2 日</option>
@@ -165,8 +176,12 @@
               </table>
             </div>
             <div class="scanner-decision-actions">
+              <label class="checkbox">
+                <input type="checkbox" id="scanner-include-portfolio" />
+                <span>參考持倉與現金</span>
+              </label>
               <button class="secondary-btn" id="scanner-ai-decision-btn" disabled>用 AI 做交易決策</button>
-              <span id="scanner-decision-hint">請先掃描出候選標的，再交給 AI 參考持倉與餘額。</span>
+              <span id="scanner-decision-hint">請先掃描出候選標的</span>
             </div>
           </section>
 

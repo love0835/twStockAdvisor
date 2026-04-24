@@ -199,11 +199,15 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
             )
 
     class StubAnalyzer:
+        seen_positions: list[str] = []
+
         async def analyze(self, req) -> AnalysisResponse:
+            self.__class__.seen_positions = [position.symbol for position in req.portfolio.positions]
+            symbol = req.watchlist[0]
             return AnalysisResponse(
                 recommendations=[
                     Recommendation(
-                        symbol="2330",
+                        symbol=symbol,
                         action="hold",
                         qty=0,
                         order_type="limit",
@@ -241,6 +245,7 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
     assert payload["recommendations"][0]["price"] == "600"
     assert payload["recommendations"][0]["stop_loss"] == "570"
     assert payload["recommendations"][0]["take_profit"] == "660"
+    assert StubAnalyzer.seen_positions == []
     assert StubFetcher.calls == ["2330"]
 
     second_response = client.post(
@@ -253,3 +258,17 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
     )
     assert second_response.status_code == 200
     assert StubFetcher.calls == ["2330"]
+
+    include_response = client.post(
+        "/api/analyze",
+        json={
+            "strategy": "swing",
+            "watchlist": [],
+            "include_portfolio": True,
+            "holding_symbols": ["2317"],
+            "storage_path": str(storage),
+        },
+    )
+    assert include_response.status_code == 200
+    assert StubAnalyzer.seen_positions == ["2317"]
+    assert StubFetcher.calls == ["2330", "2317"]

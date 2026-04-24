@@ -15,7 +15,7 @@ from twadvisor.fetchers.base import FetcherError, SymbolNotFoundError
 from twadvisor.fetchers.factory import create_fetcher
 from twadvisor.fetchers.twse import TwseFetcher
 from twadvisor.indicators.technical import compute_indicators
-from twadvisor.models import AnalysisRequest, Strategy
+from twadvisor.models import AnalysisRequest, Portfolio, Strategy
 from twadvisor.performance.metrics import cumulative_pnl, max_drawdown, sharpe_ratio, win_rate
 from twadvisor.portfolio.manager import PortfolioManager
 from twadvisor.risk.validators import ValidationError, validate_recommendation
@@ -104,8 +104,16 @@ async def analyze(payload: AnalyzePayload) -> dict[str, object]:
 
     repo = AdvisorRepository(settings.app.db_path)
     portfolio = PortfolioManager(storage_path=payload.storage_path).load()
-    analysis_symbols = payload.watchlist or [position.symbol for position in portfolio.positions]
-    all_symbols = sorted(set(analysis_symbols))
+    ai_portfolio = _select_ai_portfolio(
+        portfolio,
+        include_portfolio=payload.include_portfolio,
+        holding_symbols=payload.holding_symbols,
+    )
+    analysis_symbols = list(payload.watchlist)
+    if payload.include_portfolio:
+        analysis_symbols.extend(position.symbol for position in ai_portfolio.positions)
+    analysis_symbols = sorted(set(analysis_symbols))
+    all_symbols = sorted(set(analysis_symbols) | {position.symbol for position in ai_portfolio.positions})
     if not all_symbols:
         raise HTTPException(status_code=400, detail="No symbols provided for analysis")
 
@@ -129,7 +137,7 @@ async def analyze(payload: AnalyzePayload) -> dict[str, object]:
             _ANALYZE_INPUT_CACHE[cache_key] = (datetime.utcnow(), indicator, chip)
         return AnalysisRequest(
             strategy=Strategy(payload.strategy),
-            portfolio=portfolio,
+            portfolio=ai_portfolio,
             quotes=quotes,
             indicators=indicators,
             chips=chips,
@@ -183,6 +191,19 @@ async def analyze(payload: AnalyzePayload) -> dict[str, object]:
         "prompt_tokens": response.raw_prompt_tokens,
         "completion_tokens": response.raw_completion_tokens,
     }
+
+
+def _select_ai_portfolio(
+    portfolio: Portfolio,
+    *,
+    include_portfolio: bool,
+    holding_symbols: list[str],
+) -> Portfolio:
+    if not include_portfolio:
+        return Portfolio(cash=portfolio.cash, positions=[], updated_at=portfolio.updated_at)
+    selected = {symbol.strip() for symbol in holding_symbols if symbol.strip()}
+    positions = [position for position in portfolio.positions if not selected or position.symbol in selected]
+    return Portfolio(cash=portfolio.cash, positions=positions, updated_at=portfolio.updated_at)
 
 
 def _format_lots(qty: int) -> str:

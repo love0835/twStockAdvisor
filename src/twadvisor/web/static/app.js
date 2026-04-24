@@ -13,6 +13,8 @@ const actionLabels = {
 };
 
 let portfolioSymbols = [];
+let selectedHoldingSymbols = new Set();
+let hasLoadedPortfolio = false;
 let lastScannerSource = null;
 let lastScannerSymbols = [];
 
@@ -45,11 +47,22 @@ function renderTable(tableId, rows) {
     const tr = document.createElement("tr");
     cells.forEach((cell) => {
       const td = document.createElement("td");
-      td.textContent = cell;
+      if (cell instanceof Node) {
+        td.appendChild(cell);
+      } else {
+        td.textContent = cell;
+      }
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
   });
+}
+
+function parseSymbolList(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function storagePath() {
@@ -76,9 +89,43 @@ function setButtonLoading(button, loadingText) {
   };
 }
 
+function selectedHoldings() {
+  return portfolioSymbols.filter((symbol) => selectedHoldingSymbols.has(symbol));
+}
+
+function updatePortfolioSelectionHint() {
+  const selected = selectedHoldings();
+  document.getElementById("portfolio-ai-hint").textContent = `已選 ${selected.length} 檔`;
+  document.getElementById("portfolio-ai-btn").disabled = selected.length === 0;
+}
+
+function holdingToggle(symbol) {
+  const label = document.createElement("label");
+  label.className = "switch";
+  label.title = `選取 ${symbol}`;
+
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = selectedHoldingSymbols.has(symbol);
+  input.addEventListener("change", () => {
+    if (input.checked) {
+      selectedHoldingSymbols.add(symbol);
+    } else {
+      selectedHoldingSymbols.delete(symbol);
+    }
+    updatePortfolioSelectionHint();
+  });
+
+  const knob = document.createElement("span");
+  label.appendChild(input);
+  label.appendChild(knob);
+  return label;
+}
+
 function renderAnalysisResult(data, metaPrefix = "") {
   document.getElementById("market-view").textContent = data.market_view;
-  document.getElementById("analyze-meta").textContent = `${metaPrefix}輸入 tokens: ${data.prompt_tokens}\n輸出 tokens: ${data.completion_tokens}`;
+  document.getElementById("analyze-meta").textContent =
+    `${metaPrefix}輸入 tokens: ${data.prompt_tokens}\n輸出 tokens: ${data.completion_tokens}`;
   renderTable(
     "analyze-table",
     data.recommendations.map((row) => [
@@ -92,6 +139,34 @@ function renderAnalysisResult(data, metaPrefix = "") {
       row.reason,
     ]),
   );
+}
+
+async function runAiAnalysis({ strategy, watchlist, includePortfolio, holdingSymbols, metaPrefix, button }) {
+  const restoreButton = button ? setButtonLoading(button, "AI 分析中...") : () => {};
+  document.getElementById("market-view").textContent = "正在抓取行情與技術指標，接著呼叫 AI 分析...";
+  document.getElementById("analyze-meta").textContent = "";
+  renderTable("analyze-table", []);
+  try {
+    const data = await fetchJson("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        strategy,
+        watchlist,
+        include_portfolio: includePortfolio,
+        holding_symbols: holdingSymbols,
+        storage_path: storagePath(),
+      }),
+    });
+    renderAnalysisResult(data, metaPrefix);
+    showPanel("analyze");
+  } catch (error) {
+    document.getElementById("market-view").textContent = error.message;
+    renderTable("analyze-table", []);
+    showPanel("analyze");
+  } finally {
+    restoreButton();
+  }
 }
 
 async function loadHealth() {
@@ -127,7 +202,12 @@ document.getElementById("portfolio-import-form").addEventListener("submit", asyn
 async function loadPortfolio() {
   try {
     const data = await fetchJson("/api/portfolio");
+    const previousSelection = new Set(selectedHoldingSymbols);
     portfolioSymbols = data.rows.map((row) => row.symbol);
+    selectedHoldingSymbols = new Set(
+      portfolioSymbols.filter((symbol) => !hasLoadedPortfolio || previousSelection.has(symbol)),
+    );
+    hasLoadedPortfolio = true;
     renderStats("portfolio-stats", [
       ["現金", data.cash],
       ["持股數", String(data.position_count)],
@@ -137,6 +217,7 @@ async function loadPortfolio() {
     renderTable(
       "portfolio-table",
       data.rows.map((row) => [
+        holdingToggle(row.symbol),
         row.symbol,
         row.qty,
         row.avg_cost,
@@ -147,42 +228,61 @@ async function loadPortfolio() {
     );
   } catch (error) {
     portfolioSymbols = [];
+    selectedHoldingSymbols = new Set();
     renderStats("portfolio-stats", [["錯誤", error.message]]);
     renderTable("portfolio-table", []);
+  } finally {
+    updatePortfolioSelectionHint();
+    updateAiDecisionButton();
   }
 }
 
 document.getElementById("refresh-portfolio").addEventListener("click", loadPortfolio);
 
+document.getElementById("select-all-holdings").addEventListener("click", () => {
+  selectedHoldingSymbols = new Set(portfolioSymbols);
+  document.querySelectorAll("#portfolio-table input[type='checkbox']").forEach((input) => {
+    input.checked = true;
+  });
+  updatePortfolioSelectionHint();
+});
+
+document.getElementById("clear-all-holdings").addEventListener("click", () => {
+  selectedHoldingSymbols = new Set();
+  document.querySelectorAll("#portfolio-table input[type='checkbox']").forEach((input) => {
+    input.checked = false;
+  });
+  updatePortfolioSelectionHint();
+});
+
+document.getElementById("portfolio-ai-btn").addEventListener("click", (event) => {
+  const holdings = selectedHoldings();
+  if (holdings.length === 0) {
+    updatePortfolioSelectionHint();
+    return;
+  }
+  runAiAnalysis({
+    strategy: "position",
+    watchlist: [],
+    includePortfolio: true,
+    holdingSymbols: holdings,
+    metaPrefix: `持倉分析: ${holdings.join(", ")}\n`,
+    button: event.currentTarget,
+  });
+});
+
 document.getElementById("analyze-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const submitButton = event.submitter;
   const form = new FormData(event.target);
-  const payload = {
+  const includePortfolio = Boolean(form.get("include_portfolio"));
+  runAiAnalysis({
     strategy: form.get("strategy"),
-    watchlist: String(form.get("watchlist") || "")
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean),
-    storage_path: form.get("storage_path"),
-  };
-  const restoreButton = submitButton ? setButtonLoading(submitButton, "分析中...") : () => {};
-  document.getElementById("market-view").textContent = "正在抓取行情與技術指標，接著呼叫 AI 分析...";
-  document.getElementById("analyze-meta").textContent = "";
-  renderTable("analyze-table", []);
-  try {
-    const data = await fetchJson("/api/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    renderAnalysisResult(data);
-  } catch (error) {
-    document.getElementById("market-view").textContent = error.message;
-    renderTable("analyze-table", []);
-  } finally {
-    restoreButton();
-  }
+    watchlist: parseSymbolList(form.get("watchlist")),
+    includePortfolio,
+    holdingSymbols: includePortfolio ? portfolioSymbols : [],
+    metaPrefix: includePortfolio ? `已參考持倉: ${portfolioSymbols.join(", ")}\n` : "",
+    button: event.submitter,
+  });
 });
 
 function scannerPayload() {
@@ -198,11 +298,14 @@ function scannerPayload() {
 function updateAiDecisionButton() {
   const button = document.getElementById("scanner-ai-decision-btn");
   const hint = document.getElementById("scanner-decision-hint");
+  const includePortfolio = document.getElementById("scanner-include-portfolio").checked;
   button.disabled = lastScannerSymbols.length === 0;
   hint.textContent =
     lastScannerSymbols.length === 0
-      ? "請先掃描出候選標的，再交給 AI 參考持倉與餘額。"
-      : `將 ${lastScannerSymbols.length} 檔候選標的與 ${portfolioSymbols.length} 檔持倉一起交給 AI。`;
+      ? "請先掃描出候選標的"
+      : includePortfolio
+        ? `將 ${lastScannerSymbols.length} 檔候選標的交給 AI，並參考目前持倉與現金。`
+        : `將 ${lastScannerSymbols.length} 檔候選標的交給 AI。`;
 }
 
 async function runScanner(source, button) {
@@ -248,30 +351,18 @@ async function runScannerAiDecision(button) {
     document.getElementById("scanner-meta").textContent = "請先掃描出候選標的。";
     return;
   }
-  const restoreButton = setButtonLoading(button, "AI 決策中...");
-  const watchlist = Array.from(new Set([...lastScannerSymbols, ...portfolioSymbols]));
   const strategy = lastScannerSource === "daytrade" ? "daytrade" : "swing";
-  document.getElementById("market-view").textContent = "AI 正在參考候選標的、持倉、現金與風控限制，產生交易決策...";
-  document.getElementById("analyze-meta").textContent = "";
-  renderTable("analyze-table", []);
-  try {
-    const data = await fetchJson("/api/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        strategy,
-        watchlist,
-        storage_path: storagePath(),
-      }),
-    });
-    renderAnalysisResult(data, `AI 決策標的: ${watchlist.join(", ")}\n`);
-  } catch (error) {
-    document.getElementById("market-view").textContent = `AI 決策失敗：${error.message}`;
-    renderTable("analyze-table", []);
-  } finally {
-    restoreButton();
-    updateAiDecisionButton();
-  }
+  const includePortfolio = document.getElementById("scanner-include-portfolio").checked;
+  runAiAnalysis({
+    strategy,
+    watchlist: lastScannerSymbols,
+    includePortfolio,
+    holdingSymbols: includePortfolio ? portfolioSymbols : [],
+    metaPrefix: includePortfolio
+      ? `AI 決策標的: ${lastScannerSymbols.join(", ")}\n已參考持倉: ${portfolioSymbols.join(", ")}\n`
+      : `AI 決策標的: ${lastScannerSymbols.join(", ")}\n`,
+    button,
+  });
 }
 
 document.getElementById("scan-daytrade-btn").addEventListener("click", (event) => {
@@ -285,6 +376,8 @@ document.getElementById("scan-swing-btn").addEventListener("click", (event) => {
 document.getElementById("scanner-ai-decision-btn").addEventListener("click", (event) => {
   runScannerAiDecision(event.currentTarget);
 });
+
+document.getElementById("scanner-include-portfolio").addEventListener("change", updateAiDecisionButton);
 
 document.getElementById("report-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -308,10 +401,7 @@ document.getElementById("backtest-form").addEventListener("submit", async (event
   const form = new FormData(event.target);
   const payload = {
     strategy: form.get("strategy"),
-    symbols: String(form.get("symbols") || "")
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean),
+    symbols: parseSymbolList(form.get("symbols")),
     from_date: form.get("from_date"),
     to_date: form.get("to_date"),
     initial_cash: form.get("initial_cash"),
@@ -340,4 +430,4 @@ document.getElementById("backtest-form").addEventListener("submit", async (event
 });
 
 loadHealth();
-loadPortfolio().then(updateAiDecisionButton);
+loadPortfolio();

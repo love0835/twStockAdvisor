@@ -10,6 +10,8 @@ class AnalyzePayload(BaseModel):
 
     strategy: str
     watchlist: list[str] = Field(default_factory=list)
+    include_portfolio: bool = False
+    holding_symbols: list[str] = Field(default_factory=list)
     storage_path: str = "data/portfolio.json"
 
 
