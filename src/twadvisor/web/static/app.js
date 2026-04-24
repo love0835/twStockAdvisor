@@ -1,7 +1,7 @@
 const panelMeta = {
-  portfolio: ["持倉", "載入現有持倉、現金與未實現損益"],
-  analyze: ["分析", "執行單次 AI 分析並檢視建議"],
-  report: ["績效", "讀取資料庫內的日績效彙總"],
+  portfolio: ["持倉", "匯入現有持倉、現金與未實現損益"],
+  analyze: ["分析", "執行單次 AI 分析，或掃描全市場推薦標的"],
+  report: ["績效", "讀取資料庫內的每日績效紀錄"],
   backtest: ["回測", "用歷史 K 線檢查策略表現"],
 };
 
@@ -52,9 +52,19 @@ async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
   const data = await response.json();
   if (!response.ok) {
-    throw new Error(data.detail || "Request failed");
+    throw new Error(data.detail || "請求失敗");
   }
   return data;
+}
+
+function setButtonLoading(button, loadingText) {
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = loadingText;
+  return () => {
+    button.disabled = false;
+    button.textContent = originalText;
+  };
 }
 
 async function loadHealth() {
@@ -127,11 +137,7 @@ document.getElementById("analyze-form").addEventListener("submit", async (event)
       .filter(Boolean),
     storage_path: form.get("storage_path"),
   };
-  const originalButtonText = submitButton ? submitButton.textContent : "";
-  if (submitButton) {
-    submitButton.disabled = true;
-    submitButton.textContent = "分析中...";
-  }
+  const restoreButton = submitButton ? setButtonLoading(submitButton, "分析中...") : () => {};
   document.getElementById("market-view").textContent = "正在抓取行情與技術指標，接著呼叫 AI 分析...";
   document.getElementById("analyze-meta").textContent = "";
   renderTable("analyze-table", []);
@@ -158,11 +164,59 @@ document.getElementById("analyze-form").addEventListener("submit", async (event)
     document.getElementById("market-view").textContent = error.message;
     renderTable("analyze-table", []);
   } finally {
-    if (submitButton) {
-      submitButton.disabled = false;
-      submitButton.textContent = originalButtonText;
-    }
+    restoreButton();
   }
+});
+
+function scannerPayload() {
+  return {
+    top_n: Number(document.getElementById("scanner-top-n").value || 5),
+    exclude_holdings: document.getElementById("scanner-exclude-holdings").checked,
+    exclude_etf: document.getElementById("scanner-exclude-etf").checked,
+    foreign_consecutive_days: Number(document.getElementById("scanner-foreign-days").value || 3),
+    storage_path: "data/portfolio.json",
+  };
+}
+
+async function runScanner(source, button) {
+  const restoreButton = setButtonLoading(button, "掃描中...");
+  const meta = document.getElementById("scanner-meta");
+  meta.textContent = source === "daytrade" ? "正在掃描全市場當沖候選股..." : "正在掃描全市場短線候選股...";
+  try {
+    const data = await fetchJson(`/api/screener/${source}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(scannerPayload()),
+    });
+    meta.textContent = `全市場 ${data.candidates_total} → 規則篩選後 ${data.candidates_after_rules} → Top ${data.recommendations.length}，耗時 ${data.elapsed_sec} 秒`;
+    if (data.warnings && data.warnings.length) {
+      meta.textContent += `\n提醒：${data.warnings.join("；")}`;
+    }
+    renderTable(
+      "scanner-table",
+      data.recommendations.map((row) => [
+        String(row.rank),
+        `${row.symbol} ${row.name}`,
+        row.confidence,
+        row.entry_range,
+        row.stop_loss,
+        row.take_profit,
+        row.reason,
+      ]),
+    );
+  } catch (error) {
+    meta.textContent = `掃描失敗：${error.message}`;
+  } finally {
+    restoreButton();
+  }
+}
+
+document.getElementById("scan-daytrade-btn").addEventListener("click", (event) => {
+  runScanner("daytrade", event.currentTarget);
+});
+
+document.getElementById("scan-swing-btn").addEventListener("click", (event) => {
+  runScanner("swing", event.currentTarget);
 });
 
 document.getElementById("report-form").addEventListener("submit", async (event) => {

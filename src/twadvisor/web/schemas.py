@@ -30,3 +30,15 @@ class PortfolioImportPayload(BaseModel):
     csv_path: str
     cash: str | None = None
     storage_path: str = "data/portfolio.json"
+
+
+class ScreenerPayload(BaseModel):
+    """Request body for market scanner endpoints."""
+
+    top_n: int = Field(default=5, ge=1, le=20)
+    exclude_holdings: bool = True
+    min_price: float | None = None
+    max_price: float | None = None
+    exclude_etf: bool = True
+    foreign_consecutive_days: int = Field(default=3, ge=0, le=10)
+    storage_path: str = "data/portfolio.json"

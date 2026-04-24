@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -11,18 +13,21 @@ from twadvisor.analyzer.factory import create_analyzer
 from twadvisor.backtest.engine import BacktestEngine
 from twadvisor.fetchers.base import FetcherError, SymbolNotFoundError
 from twadvisor.fetchers.factory import create_fetcher
+from twadvisor.fetchers.twse import TwseFetcher
 from twadvisor.indicators.technical import compute_indicators
 from twadvisor.models import AnalysisRequest, Strategy
 from twadvisor.performance.metrics import cumulative_pnl, max_drawdown, sharpe_ratio, win_rate
 from twadvisor.portfolio.manager import PortfolioManager
 from twadvisor.risk.validators import ValidationError, validate_recommendation
+from twadvisor.screener.pipeline import ScreenerPipeline
 from twadvisor.settings import load_settings
 from twadvisor.storage.repo import AdvisorRepository
-from twadvisor.web.schemas import AnalyzePayload, BacktestPayload, PortfolioImportPayload
+from twadvisor.web.schemas import AnalyzePayload, BacktestPayload, PortfolioImportPayload, ScreenerPayload
 
 router = APIRouter()
 _ANALYZE_INPUT_CACHE: dict[tuple[str, str, str], tuple[datetime, object, object]] = {}
 _ANALYZE_CACHE_TTL = timedelta(minutes=10)
+_SCREENER_CACHE: dict[tuple[str, str], tuple[datetime, dict[str, object]]] = {}
 
 
 @router.get("/health")
@@ -173,6 +178,104 @@ async def analyze(payload: AnalyzePayload) -> dict[str, object]:
         "warnings": response.warnings,
         "prompt_tokens": response.raw_prompt_tokens,
         "completion_tokens": response.raw_completion_tokens,
+    }
+
+
+@router.post("/screener/daytrade")
+async def screener_daytrade(payload: ScreenerPayload) -> dict[str, object]:
+    """Run a market-wide day-trade scan."""
+
+    return await _run_screener("daytrade", payload)
+
+
+@router.post("/screener/swing")
+async def screener_swing(payload: ScreenerPayload) -> dict[str, object]:
+    """Run a market-wide swing scan."""
+
+    return await _run_screener("swing", payload)
+
+
+async def _run_screener(source: str, payload: ScreenerPayload) -> dict[str, object]:
+    settings = load_settings()
+    cache_ttl = timedelta(minutes=settings.screener.cache_ttl_minutes)
+    cache_key = (
+        source,
+        json.dumps(payload.model_dump(), sort_keys=True, ensure_ascii=False) + f":{date.today().isoformat()}",
+    )
+    cached = _SCREENER_CACHE.get(cache_key)
+    if cached and datetime.utcnow() - cached[0] < cache_ttl:
+        result = dict(cached[1])
+        result["elapsed_sec"] = 0.0
+        return result
+
+    started = time.perf_counter()
+    fetcher = create_fetcher(settings)
+    try:
+        analyzer = create_analyzer(settings)
+    except ValueError:
+        analyzer = None
+    portfolio = PortfolioManager(storage_path=payload.storage_path).load()
+    exclude_symbols = {position.symbol for position in portfolio.positions} if payload.exclude_holdings else set()
+    pipeline = ScreenerPipeline(fetcher, TwseFetcher(), analyzer, settings.screener)
+
+    try:
+        if source == "daytrade":
+            result = await pipeline.run_daytrade(
+                top_n=payload.top_n,
+                exclude_etf=payload.exclude_etf,
+                min_price=None if payload.min_price is None else Decimal(str(payload.min_price)),
+                max_price=None if payload.max_price is None else Decimal(str(payload.max_price)),
+                exclude_symbols=exclude_symbols,
+            )
+        else:
+            result = await pipeline.run_swing(
+                top_n=payload.top_n,
+                foreign_consecutive_days=payload.foreign_consecutive_days,
+                min_price=None if payload.min_price is None else Decimal(str(payload.min_price)),
+                max_price=None if payload.max_price is None else Decimal(str(payload.max_price)),
+                exclude_symbols=exclude_symbols,
+            )
+    except (FetcherError, SymbolNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    response = _serialize_screen_result(result)
+    response["elapsed_sec"] = round(time.perf_counter() - started, 3)
+    if analyzer is None:
+        response["warnings"] = [*response.get("warnings", []), "未連接 AI provider，暫以規則分數排序。"]
+    _SCREENER_CACHE[cache_key] = (datetime.utcnow(), response)
+    return response
+
+
+def _serialize_screen_result(result) -> dict[str, object]:
+    rows = []
+    for recommendation in result.recommendations:
+        entry_low = "-" if recommendation.entry_price_low is None else str(recommendation.entry_price_low)
+        entry_high = "-" if recommendation.entry_price_high is None else str(recommendation.entry_price_high)
+        rows.append(
+            {
+                "rank": recommendation.rank,
+                "symbol": recommendation.symbol,
+                "name": recommendation.name,
+                "action": recommendation.action,
+                "confidence": f"{(recommendation.confidence * Decimal('100')):.0f}%",
+                "entry_range": f"{entry_low} ~ {entry_high}",
+                "stop_loss": "-" if recommendation.stop_loss is None else str(recommendation.stop_loss),
+                "take_profit": "-" if recommendation.take_profit is None else str(recommendation.take_profit),
+                "reason": recommendation.reason,
+                "rule_score": str(recommendation.rule_score),
+                "warnings": "；".join(recommendation.warnings) if recommendation.warnings else "-",
+            }
+        )
+    return {
+        "source": result.source,
+        "market_view": result.market_view,
+        "candidates_total": result.candidates_total,
+        "candidates_after_rules": result.candidates_after_rules,
+        "recommendations": rows,
+        "warnings": result.warnings,
+        "prompt_tokens": result.prompt_tokens,
+        "completion_tokens": result.completion_tokens,
+        "elapsed_sec": result.elapsed_sec,
     }
 
 

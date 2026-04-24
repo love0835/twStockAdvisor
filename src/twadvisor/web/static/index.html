@@ -28,7 +28,7 @@
         <header class="topbar">
           <div>
             <h2 id="panel-title">持倉</h2>
-            <p id="panel-subtitle">載入現有持倉、現金與未實現損益</p>
+            <p id="panel-subtitle">匯入現有持倉、現金與未實現損益</p>
           </div>
           <div class="status-pill" id="health-pill">API 連線中</div>
         </header>
@@ -36,7 +36,7 @@
         <section class="grid" id="portfolio-panel">
           <section class="band">
             <div class="section-head">
-              <h3>持倉總覽</h3>
+              <h3>持倉摘要</h3>
               <button class="icon-btn" id="refresh-portfolio" title="重新整理">↻</button>
             </div>
             <div class="stats" id="portfolio-stats"></div>
@@ -106,6 +106,64 @@
               </label>
               <button type="submit" class="primary-btn">執行分析</button>
             </form>
+          </section>
+
+          <section class="band">
+            <div class="section-head">
+              <h3>市場掃描 · AI 推薦</h3>
+            </div>
+            <div class="scanner-common">
+              <label>
+                <span>推薦檔數</span>
+                <input type="number" id="scanner-top-n" value="5" min="1" max="20" />
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" id="scanner-exclude-holdings" checked />
+                <span>排除已持有</span>
+              </label>
+            </div>
+            <div class="scanner-actions">
+              <div class="scanner-block">
+                <div class="scanner-block-head">當沖推薦</div>
+                <label class="checkbox">
+                  <input type="checkbox" id="scanner-exclude-etf" checked />
+                  <span>排除 ETF / ETN / 槓反</span>
+                </label>
+                <button class="primary-btn" id="scan-daytrade-btn">掃描當沖標的</button>
+              </div>
+              <div class="scanner-block">
+                <div class="scanner-block-head">短線推薦</div>
+                <label>
+                  <span>外資連續買超天數</span>
+                  <select id="scanner-foreign-days">
+                    <option value="0">不要求</option>
+                    <option value="2">連 2 日</option>
+                    <option value="3" selected>連 3 日</option>
+                    <option value="5">連 5 日</option>
+                    <option value="7">連 7 日</option>
+                    <option value="10">連 10 日</option>
+                  </select>
+                </label>
+                <button class="primary-btn" id="scan-swing-btn">掃描短線標的</button>
+              </div>
+            </div>
+            <div class="scanner-meta" id="scanner-meta">尚未掃描</div>
+            <div class="table-wrap">
+              <table id="scanner-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>股票</th>
+                    <th>信心</th>
+                    <th>進場區間</th>
+                    <th>停損</th>
+                    <th>停利</th>
+                    <th>理由</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
           </section>
 
           <section class="band">
