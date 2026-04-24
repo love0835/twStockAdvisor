@@ -95,6 +95,19 @@ class EmptyMarketFetcher(FakeFetcher):
         return []
 
 
+class QuotaLimitedFetcher(FakeFetcher):
+    """Fetcher that simulates FinMind quota/payment rejection."""
+
+    def get_market_prices(self, dt: date) -> list[dict[str, object]]:
+        raise FetcherError("FinMind request failed: 402")
+
+    def _request(self, **params: str) -> dict:
+        raise FetcherError("FinMind request failed: 402")
+
+    async def get_quote(self, symbol: str) -> Quote:
+        raise FetcherError("FinMind request failed: 402")
+
+
 class RangeChipFetcher(FakeFetcher):
     """Fetcher with bulk institutional chip data support."""
 
@@ -200,6 +213,18 @@ async def test_pipeline_falls_back_when_full_market_rows_are_empty() -> None:
     """Non-trading days can return an empty full-market response."""
 
     pipeline = ScreenerPipeline(EmptyMarketFetcher(), FakeTwse(), None, ScreenerSettings())
+
+    result = await pipeline.run_daytrade(top_n=1, exclude_etf=True)
+
+    assert result.candidates_total == 1
+    assert result.recommendations[0].symbol == "2330"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_uses_quote_fallback_when_finmind_quota_is_limited() -> None:
+    """FinMind 402 should not fail the whole scanner when quote fallbacks exist."""
+
+    pipeline = ScreenerPipeline(QuotaLimitedFetcher(), FakeTwse(), None, ScreenerSettings(), quote_fallbacks=[FakeFetcher()])
 
     result = await pipeline.run_daytrade(top_n=1, exclude_etf=True)
 

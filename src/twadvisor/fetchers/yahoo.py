@@ -21,6 +21,10 @@ class YahooFinanceFetcher(BaseFetcher):
 
         ticker = yf.Ticker(f"{symbol}.TW")
         history = ticker.history(period="5d", interval="1d")
+        required_columns = ["Open", "High", "Low", "Close"]
+        if history.empty or any(column not in history.columns for column in required_columns):
+            raise SymbolNotFoundError(symbol)
+        history = history.dropna(subset=required_columns)
         if history.empty:
             raise SymbolNotFoundError(symbol)
         latest = history.iloc[-1]
@@ -54,6 +58,10 @@ class YahooFinanceFetcher(BaseFetcher):
 
         ticker = yf.Ticker(f"{symbol}.TW")
         frame = ticker.history(start=start, end=end + timedelta(days=1), interval="1d")
+        required_columns = ["Open", "High", "Low", "Close"]
+        if frame.empty or any(column not in frame.columns for column in required_columns):
+            raise SymbolNotFoundError(symbol)
+        frame = frame.dropna(subset=required_columns)
         if frame.empty:
             raise SymbolNotFoundError(symbol)
         frame = frame.rename(

@@ -12,6 +12,7 @@ import pandas as pd
 
 from twadvisor.fetchers.base import BaseFetcher, FetcherError, SymbolNotFoundError
 from twadvisor.fetchers.twse import TwseFetcher
+from twadvisor.fetchers.yahoo import YahooFinanceFetcher
 from twadvisor.models import ChipData
 from twadvisor.screener.base import Candidate, RankedRecommendation, ScreenResult
 from twadvisor.screener.daytrade import DaytradeScreener
@@ -53,11 +54,13 @@ class ScreenerPipeline:
         twse_fetcher: TwseFetcher,
         analyzer: object | None,
         config: ScreenerSettings,
+        quote_fallbacks: list[BaseFetcher] | None = None,
     ) -> None:
         self.fetcher = fetcher
         self.twse_fetcher = twse_fetcher
         self.analyzer = analyzer
         self.config = config
+        self.quote_fallbacks = quote_fallbacks if quote_fallbacks is not None else [YahooFinanceFetcher()]
 
     async def run_daytrade(
         self,
@@ -155,10 +158,16 @@ class ScreenerPipeline:
         """Fetch stock metadata when the provider supports it."""
 
         if hasattr(self.fetcher, "get_stock_info"):
-            return self.fetcher.get_stock_info()
+            try:
+                return self.fetcher.get_stock_info()
+            except FetcherError:
+                return {}
         if hasattr(self.fetcher, "_request"):
-            payload = self.fetcher._request(dataset="TaiwanStockInfo")
-            return {symbol_from_record(row): row for row in payload.get("data", []) if symbol_from_record(row)}
+            try:
+                payload = self.fetcher._request(dataset="TaiwanStockInfo")
+                return {symbol_from_record(row): row for row in payload.get("data", []) if symbol_from_record(row)}
+            except FetcherError:
+                return {}
         return {}
 
     async def _fetch_market_rows(self, dt: date, fallback_symbols: list[str]) -> list[dict[str, Any]]:
@@ -185,8 +194,8 @@ class ScreenerPipeline:
         rows: list[dict[str, Any]] = []
         for symbol in symbols:
             try:
-                quote = await self.fetcher.get_quote(symbol)
-            except (FetcherError, SymbolNotFoundError, ValueError):
+                quote = await self._fetch_quote_with_fallbacks(symbol)
+            except Exception:
                 continue
             volume_shares = quote.volume * 1000
             rows.append(
@@ -201,6 +210,17 @@ class ScreenerPipeline:
                 }
             )
         return rows
+
+    async def _fetch_quote_with_fallbacks(self, symbol: str):
+        last_error: Exception | None = None
+        for fetcher in [self.fetcher, *self.quote_fallbacks]:
+            try:
+                return await fetcher.get_quote(symbol)
+            except Exception as exc:
+                last_error = exc
+        if last_error is not None:
+            raise last_error
+        raise SymbolNotFoundError(symbol)
 
     def _daytrade_symbols(
         self,
@@ -234,7 +254,7 @@ class ScreenerPipeline:
         ordered = [(symbol, info.get(symbol, {})) for symbol in LIQUID_FALLBACK_SYMBOLS]
         ordered.extend((symbol, record) for symbol, record in sorted(info.items()) if symbol not in LIQUID_FALLBACK_SYMBOLS)
         for symbol, record in ordered:
-            if str(record.get("type", "")).lower() not in {"twse", "tpex"}:
+            if record and str(record.get("type", "")).lower() not in {"twse", "tpex"}:
                 continue
             if is_etf(symbol, name_from_record(record, symbol), record):
                 continue
