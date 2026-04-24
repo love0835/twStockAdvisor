@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "apscheduler>=3.10.4",
     "anthropic>=0.72.0",
+    "fastapi>=0.116.0",
     "google-genai>=1.15.0",
     "keyring>=25.6.0",
     "numpy>=2.3.0",
@@ -20,6 +21,7 @@ dependencies = [
     "typer>=0.16.0",
     "twstock>=1.4.0",
     "tzdata>=2025.2",
+    "uvicorn>=0.35.0",
     "yfinance>=0.2.65",
 ]
 

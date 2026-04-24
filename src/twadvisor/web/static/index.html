@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TwStockAdvisor</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">TW</div>
+          <div>
+            <h1>TwStockAdvisor</h1>
+            <p>台股分析工作台</p>
+          </div>
+        </div>
+        <nav class="nav">
+          <button class="nav-btn active" data-panel="portfolio">持倉</button>
+          <button class="nav-btn" data-panel="analyze">分析</button>
+          <button class="nav-btn" data-panel="report">績效</button>
+          <button class="nav-btn" data-panel="backtest">回測</button>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h2 id="panel-title">持倉</h2>
+            <p id="panel-subtitle">載入現有持倉、現金與未實現損益</p>
+          </div>
+          <div class="status-pill" id="health-pill">API 連線中</div>
+        </header>
+
+        <section class="grid" id="portfolio-panel">
+          <section class="band">
+            <div class="section-head">
+              <h3>持倉總覽</h3>
+              <button class="icon-btn" id="refresh-portfolio" title="重新整理">↻</button>
+            </div>
+            <div class="stats" id="portfolio-stats"></div>
+            <div class="table-wrap">
+              <table id="portfolio-table">
+                <thead>
+                  <tr>
+                    <th>股票</th>
+                    <th>股數</th>
+                    <th>均價</th>
+                    <th>現價</th>
+                    <th>未實現損益</th>
+                    <th>報酬率</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="band">
+            <div class="section-head">
+              <h3>匯入持倉</h3>
+            </div>
+            <form id="portfolio-import-form" class="form-grid">
+              <label>
+                <span>CSV 路徑</span>
+                <input name="csv_path" value="E:/TwStockAdvisor/tests/fixtures/portfolio_sample.csv" />
+              </label>
+              <label>
+                <span>現金</span>
+                <input name="cash" value="200000" />
+              </label>
+              <label>
+                <span>儲存位置</span>
+                <input name="storage_path" value="data/portfolio.json" />
+              </label>
+              <button type="submit" class="primary-btn">匯入</button>
+            </form>
+            <div class="result-box" id="portfolio-import-result"></div>
+          </section>
+        </section>
+
+        <section class="grid hidden" id="analyze-panel">
+          <section class="band">
+            <div class="section-head">
+              <h3>單次分析</h3>
+            </div>
+            <form id="analyze-form" class="form-grid">
+              <label>
+                <span>策略</span>
+                <select name="strategy">
+                  <option value="daytrade">daytrade</option>
+                  <option value="swing" selected>swing</option>
+                  <option value="position">position</option>
+                  <option value="longterm">longterm</option>
+                  <option value="dividend">dividend</option>
+                </select>
+              </label>
+              <label>
+                <span>觀察清單</span>
+                <input name="watchlist" value="2330,2317" />
+              </label>
+              <label>
+                <span>持倉檔案</span>
+                <input name="storage_path" value="data/portfolio.json" />
+              </label>
+              <button type="submit" class="primary-btn">執行分析</button>
+            </form>
+          </section>
+
+          <section class="band">
+            <div class="section-head">
+              <h3>分析結果</h3>
+            </div>
+            <div class="market-view" id="market-view">尚未執行</div>
+            <div class="table-wrap">
+              <table id="analyze-table">
+                <thead>
+                  <tr>
+                    <th>股票</th>
+                    <th>動作</th>
+                    <th>股數</th>
+                    <th>價格</th>
+                    <th>警示</th>
+                    <th>理由</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="result-box" id="analyze-meta"></div>
+          </section>
+        </section>
+
+        <section class="grid hidden" id="report-panel">
+          <section class="band">
+            <div class="section-head">
+              <h3>績效報告</h3>
+            </div>
+            <form id="report-form" class="inline-form">
+              <label>
+                <span>區間</span>
+                <input name="period" value="30d" />
+              </label>
+              <button type="submit" class="primary-btn">查詢</button>
+            </form>
+            <div class="stats" id="report-stats"></div>
+          </section>
+        </section>
+
+        <section class="grid hidden" id="backtest-panel">
+          <section class="band">
+            <div class="section-head">
+              <h3>歷史回測</h3>
+            </div>
+            <form id="backtest-form" class="form-grid">
+              <label>
+                <span>策略</span>
+                <select name="strategy">
+                  <option value="daytrade">daytrade</option>
+                  <option value="swing" selected>swing</option>
+                  <option value="position">position</option>
+                  <option value="longterm">longterm</option>
+                  <option value="dividend">dividend</option>
+                </select>
+              </label>
+              <label>
+                <span>股票</span>
+                <input name="symbols" value="2330,2317" />
+              </label>
+              <label>
+                <span>開始</span>
+                <input name="from_date" value="2024-01-01" />
+              </label>
+              <label>
+                <span>結束</span>
+                <input name="to_date" value="2024-12-31" />
+              </label>
+              <label>
+                <span>初始資金</span>
+                <input name="initial_cash" value="1000000" />
+              </label>
+              <button type="submit" class="primary-btn">執行回測</button>
+            </form>
+          </section>
+
+          <section class="band">
+            <div class="section-head">
+              <h3>回測結果</h3>
+            </div>
+            <div class="stats" id="backtest-stats"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
