@@ -261,7 +261,7 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
         calls: list[str] = []
 
         async def get_quotes(self, symbols: list[str]) -> dict[str, Quote]:
-            return {symbol: quote for symbol in symbols}
+            return {symbol: quote.model_copy(update={"symbol": symbol}) for symbol in symbols}
 
         async def get_kline(self, symbol: str, start: object, end: object) -> pd.DataFrame:
             self.calls.append(symbol)
@@ -286,12 +286,14 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
         async def analyze(self, req) -> AnalysisResponse:
             self.__class__.seen_positions = [position.symbol for position in req.portfolio.positions]
             symbol = req.watchlist[0]
+            action = "buy" if symbol == "2317" else "hold"
+            qty = 100 if symbol == "2317" else 0
             return AnalysisResponse(
                 recommendations=[
                     Recommendation(
                         symbol=symbol,
-                        action="hold",
-                        qty=0,
+                        action=action,
+                        qty=qty,
                         order_type="limit",
                         price=Decimal("600"),
                         stop_loss=Decimal("570"),
@@ -352,6 +354,8 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
         },
     )
     assert include_response.status_code == 200
-    assert "2317 缺少籌碼資料" in include_response.json()["warnings"][0]
+    include_payload = include_response.json()
+    assert "2317 缺少籌碼資料" in include_payload["warnings"][0]
+    assert include_payload["recommendations"][0]["warnings"] == "單一持股比重超過設定上限；偵測到零股交易數量"
     assert StubAnalyzer.seen_positions == ["2317"]
     assert StubFetcher.calls == ["2330", "2317"]

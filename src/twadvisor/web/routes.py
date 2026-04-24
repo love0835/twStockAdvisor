@@ -46,6 +46,16 @@ router = APIRouter()
 _ANALYZE_INPUT_CACHE: dict[tuple[str, str, str], tuple[datetime, object, object]] = {}
 _ANALYZE_CACHE_TTL = timedelta(minutes=10)
 _SCREENER_CACHE: dict[tuple[str, str], tuple[datetime, dict[str, object]]] = {}
+_WARNING_TRANSLATIONS = {
+    "Recommendation symbol does not match quote": "AI 回傳的股票代號與行情資料不一致",
+    "Recommendation price is outside the daily limit range": "建議下單價超出今日漲跌停範圍",
+    "Insufficient cash for buy recommendation": "買進建議所需現金不足",
+    "Position size exceeds configured maximum percentage": "單一持股比重超過設定上限",
+    "BUY recommendation must satisfy stop_loss < price < take_profit": "買進建議必須符合：停損價 < 下單價 < 停利價",
+    "Insufficient holdings for sell recommendation": "賣出建議超過目前持股數量",
+    "Quantity is not a round lot multiple of 1000": "股數不是整張 1000 股的倍數",
+    "Odd-lot quantity detected": "偵測到零股交易數量",
+}
 
 
 def _auth_service() -> AuthService:
@@ -444,9 +454,9 @@ async def analyze(payload: AnalyzePayload, user: CurrentUser = Depends(_current_
                 portfolio,
                 max_position_pct=settings.risk.max_position_pct,
             )
-            warning_text = "; ".join(warnings) if warnings else "-"
+            warning_text = _localize_warning_text("; ".join(warnings)) if warnings else "-"
         except ValidationError as exc:
-            warning_text = f"blocked: {exc}"
+            warning_text = _localize_warning_text(f"blocked: {exc}")
         rows.append(
             {
                 "symbol": recommendation.symbol,
@@ -469,7 +479,7 @@ async def analyze(payload: AnalyzePayload, user: CurrentUser = Depends(_current_
     return {
         "market_view": response.market_view,
         "recommendations": rows,
-        "warnings": response.warnings,
+        "warnings": [_localize_warning_text(warning) for warning in response.warnings],
         "prompt_tokens": response.raw_prompt_tokens,
         "completion_tokens": response.raw_completion_tokens,
     }
@@ -498,6 +508,18 @@ def _empty_chip(symbol: str, dt: date) -> ChipData:
         short_balance=0,
         date=dt,
     )
+
+
+def _localize_warning_text(text: str) -> str:
+    if not text or text == "-":
+        return text
+    if text.startswith("blocked: "):
+        reason = text.removeprefix("blocked: ")
+        return f"封鎖：{_WARNING_TRANSLATIONS.get(reason, reason)}"
+    parts = [part.strip() for part in text.replace("；", ";").split(";") if part.strip()]
+    if len(parts) > 1:
+        return "；".join(_WARNING_TRANSLATIONS.get(part, part) for part in parts)
+    return _WARNING_TRANSLATIONS.get(text, text)
 
 
 def _format_lots(qty: int) -> str:
