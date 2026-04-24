@@ -12,6 +12,10 @@ const actionLabels = {
   watch: "觀察",
 };
 
+let portfolioSymbols = [];
+let lastScannerSource = null;
+let lastScannerSymbols = [];
+
 function showPanel(panel) {
   document.querySelectorAll(".nav-btn").forEach((button) => {
     button.classList.toggle("active", button.dataset.panel === panel);
@@ -48,6 +52,11 @@ function renderTable(tableId, rows) {
   });
 }
 
+function storagePath() {
+  const field = document.querySelector("#analyze-form input[name='storage_path']");
+  return field ? field.value : "data/portfolio.json";
+}
+
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
   const data = await response.json();
@@ -65,6 +74,22 @@ function setButtonLoading(button, loadingText) {
     button.disabled = false;
     button.textContent = originalText;
   };
+}
+
+function renderAnalysisResult(data, metaPrefix = "") {
+  document.getElementById("market-view").textContent = data.market_view;
+  document.getElementById("analyze-meta").textContent = `${metaPrefix}輸入 tokens: ${data.prompt_tokens}\n輸出 tokens: ${data.completion_tokens}`;
+  renderTable(
+    "analyze-table",
+    data.recommendations.map((row) => [
+      row.symbol,
+      actionLabels[row.action] || row.action,
+      String(row.qty),
+      row.price,
+      row.warnings,
+      row.reason,
+    ]),
+  );
 }
 
 async function loadHealth() {
@@ -100,6 +125,7 @@ document.getElementById("portfolio-import-form").addEventListener("submit", asyn
 async function loadPortfolio() {
   try {
     const data = await fetchJson("/api/portfolio");
+    portfolioSymbols = data.rows.map((row) => row.symbol);
     renderStats("portfolio-stats", [
       ["現金", data.cash],
       ["持股數", String(data.position_count)],
@@ -118,6 +144,7 @@ async function loadPortfolio() {
       ]),
     );
   } catch (error) {
+    portfolioSymbols = [];
     renderStats("portfolio-stats", [["錯誤", error.message]]);
     renderTable("portfolio-table", []);
   }
@@ -147,19 +174,7 @@ document.getElementById("analyze-form").addEventListener("submit", async (event)
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    document.getElementById("market-view").textContent = data.market_view;
-    document.getElementById("analyze-meta").textContent = `輸入 tokens: ${data.prompt_tokens}\n輸出 tokens: ${data.completion_tokens}`;
-    renderTable(
-      "analyze-table",
-      data.recommendations.map((row) => [
-        row.symbol,
-        actionLabels[row.action] || row.action,
-        String(row.qty),
-        row.price,
-        row.warnings,
-        row.reason,
-      ]),
-    );
+    renderAnalysisResult(data);
   } catch (error) {
     document.getElementById("market-view").textContent = error.message;
     renderTable("analyze-table", []);
@@ -174,13 +189,26 @@ function scannerPayload() {
     exclude_holdings: document.getElementById("scanner-exclude-holdings").checked,
     exclude_etf: document.getElementById("scanner-exclude-etf").checked,
     foreign_consecutive_days: Number(document.getElementById("scanner-foreign-days").value || 3),
-    storage_path: "data/portfolio.json",
+    storage_path: storagePath(),
   };
+}
+
+function updateAiDecisionButton() {
+  const button = document.getElementById("scanner-ai-decision-btn");
+  const hint = document.getElementById("scanner-decision-hint");
+  button.disabled = lastScannerSymbols.length === 0;
+  hint.textContent =
+    lastScannerSymbols.length === 0
+      ? "請先掃描出候選標的，再交給 AI 參考持倉與餘額。"
+      : `將 ${lastScannerSymbols.length} 檔候選標的與 ${portfolioSymbols.length} 檔持倉一起交給 AI。`;
 }
 
 async function runScanner(source, button) {
   const restoreButton = setButtonLoading(button, "掃描中...");
   const meta = document.getElementById("scanner-meta");
+  lastScannerSource = source;
+  lastScannerSymbols = [];
+  updateAiDecisionButton();
   meta.textContent = source === "daytrade" ? "正在掃描全市場當沖候選股..." : "正在掃描全市場短線候選股...";
   try {
     const data = await fetchJson(`/api/screener/${source}`, {
@@ -188,6 +216,7 @@ async function runScanner(source, button) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(scannerPayload()),
     });
+    lastScannerSymbols = data.recommendations.map((row) => row.symbol);
     meta.textContent = `全市場 ${data.candidates_total} → 規則篩選後 ${data.candidates_after_rules} → Top ${data.recommendations.length}，耗時 ${data.elapsed_sec} 秒`;
     if (data.warnings && data.warnings.length) {
       meta.textContent += `\n提醒：${data.warnings.join("；")}`;
@@ -207,7 +236,39 @@ async function runScanner(source, button) {
   } catch (error) {
     meta.textContent = `掃描失敗：${error.message}`;
   } finally {
+    updateAiDecisionButton();
     restoreButton();
+  }
+}
+
+async function runScannerAiDecision(button) {
+  if (lastScannerSymbols.length === 0) {
+    document.getElementById("scanner-meta").textContent = "請先掃描出候選標的。";
+    return;
+  }
+  const restoreButton = setButtonLoading(button, "AI 決策中...");
+  const watchlist = Array.from(new Set([...lastScannerSymbols, ...portfolioSymbols]));
+  const strategy = lastScannerSource === "daytrade" ? "daytrade" : "swing";
+  document.getElementById("market-view").textContent = "AI 正在參考候選標的、持倉、現金與風控限制，產生交易決策...";
+  document.getElementById("analyze-meta").textContent = "";
+  renderTable("analyze-table", []);
+  try {
+    const data = await fetchJson("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        strategy,
+        watchlist,
+        storage_path: storagePath(),
+      }),
+    });
+    renderAnalysisResult(data, `AI 決策標的: ${watchlist.join(", ")}\n`);
+  } catch (error) {
+    document.getElementById("market-view").textContent = `AI 決策失敗：${error.message}`;
+    renderTable("analyze-table", []);
+  } finally {
+    restoreButton();
+    updateAiDecisionButton();
   }
 }
 
@@ -217,6 +278,10 @@ document.getElementById("scan-daytrade-btn").addEventListener("click", (event) =
 
 document.getElementById("scan-swing-btn").addEventListener("click", (event) => {
   runScanner("swing", event.currentTarget);
+});
+
+document.getElementById("scanner-ai-decision-btn").addEventListener("click", (event) => {
+  runScannerAiDecision(event.currentTarget);
 });
 
 document.getElementById("report-form").addEventListener("submit", async (event) => {
@@ -273,4 +338,4 @@ document.getElementById("backtest-form").addEventListener("submit", async (event
 });
 
 loadHealth();
-loadPortfolio();
+loadPortfolio().then(updateAiDecisionButton);

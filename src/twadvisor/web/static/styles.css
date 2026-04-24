@@ -60,7 +60,8 @@ body {
 
 .nav-btn,
 .icon-btn,
-.primary-btn {
+.primary-btn,
+.secondary-btn {
   border: 0;
   cursor: pointer;
   font: inherit;
@@ -248,9 +249,32 @@ select {
   background: #175cd3;
 }
 
-.primary-btn:disabled {
+.secondary-btn {
+  min-height: 40px;
+  padding: 0 16px;
+  background: #e8eef5;
+  color: #1f2933;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.secondary-btn:hover {
+  background: #d9e2ec;
+}
+
+.primary-btn:disabled,
+.secondary-btn:disabled {
   cursor: wait;
   opacity: 0.72;
+}
+
+.scanner-decision-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  color: #52606d;
 }
 
 .table-wrap {
