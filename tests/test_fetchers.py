@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 
 import pandas as pd
 import pytest
@@ -80,6 +81,14 @@ async def test_finmind_get_quote_success(monkeypatch: pytest.MonkeyPatch) -> Non
         "status": 200,
         "data": [
             {
+                "date": "2026-04-22",
+                "open": 980,
+                "max": 1000,
+                "min": 970,
+                "close": 990,
+                "Trading_Volume": 1000000,
+            },
+            {
                 "date": "2026-04-23",
                 "open": 990,
                 "max": 1010,
@@ -97,6 +106,9 @@ async def test_finmind_get_quote_success(monkeypatch: pytest.MonkeyPatch) -> Non
     assert isinstance(quote, Quote)
     assert quote.symbol == "2330"
     assert quote.volume == 1200
+    assert quote.prev_close == Decimal("990")
+    assert quote.limit_up == Decimal("1089.00")
+    assert quote.limit_down == Decimal("891.00")
 
 
 @pytest.mark.asyncio
@@ -224,6 +236,8 @@ async def test_twstock_fetcher_quote_and_kline(monkeypatch: pytest.MonkeyPatch) 
 
     assert quote.name == "TSMC"
     assert quote.volume == 2500
+    assert quote.limit_up == Decimal("1094.50")
+    assert quote.limit_down == Decimal("895.50")
     assert not frame.empty
     assert chip.foreign_net == 0
 
@@ -269,6 +283,8 @@ async def test_yahoo_fetcher_quote_and_kline(monkeypatch: pytest.MonkeyPatch) ->
     chip = await fetcher.get_chip("2330", date(2026, 4, 23))
 
     assert str(quote.price) == "1005.0"
+    assert quote.limit_up == Decimal("1100.00")
+    assert quote.limit_down == Decimal("900.00")
     assert list(frame.columns) == ["open", "high", "low", "close", "volume"]
     assert chip.short_balance == 0
 

@@ -9,6 +9,7 @@ import pandas as pd
 import yfinance as yf
 
 from twadvisor.fetchers.base import BaseFetcher, SymbolNotFoundError
+from twadvisor.fetchers.limits import limit_down_from_prev_close, limit_up_from_prev_close
 from twadvisor.models import ChipData, Quote
 
 
@@ -25,6 +26,7 @@ class YahooFinanceFetcher(BaseFetcher):
         latest = history.iloc[-1]
         previous = history.iloc[-2] if len(history) > 1 else latest
         timestamp = history.index[-1].to_pydatetime()
+        prev_close = Decimal(str(round(float(previous["Close"]), 4)))
         return Quote(
             symbol=symbol,
             name=symbol,
@@ -32,12 +34,12 @@ class YahooFinanceFetcher(BaseFetcher):
             open=Decimal(str(round(float(latest["Open"]), 4))),
             high=Decimal(str(round(float(latest["High"]), 4))),
             low=Decimal(str(round(float(latest["Low"]), 4))),
-            prev_close=Decimal(str(round(float(previous["Close"]), 4))),
+            prev_close=prev_close,
             volume=int(latest["Volume"]) // 1000,
             bid=Decimal(str(round(float(latest["Close"]), 4))),
             ask=Decimal(str(round(float(latest["Close"]), 4))),
-            limit_up=Decimal(str(round(float(latest["Close"]), 4))),
-            limit_down=Decimal(str(round(float(latest["Close"]), 4))),
+            limit_up=limit_up_from_prev_close(prev_close),
+            limit_down=limit_down_from_prev_close(prev_close),
             timestamp=timestamp,
             is_suspended=False,
         )

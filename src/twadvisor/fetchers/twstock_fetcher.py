@@ -9,6 +9,7 @@ import pandas as pd
 import twstock
 
 from twadvisor.fetchers.base import BaseFetcher, SymbolNotFoundError
+from twadvisor.fetchers.limits import limit_down_from_prev_close, limit_up_from_prev_close
 from twadvisor.models import ChipData, Quote
 
 
@@ -40,8 +41,8 @@ class TwstockFetcher(BaseFetcher):
             volume=int(data.get("accumulate_trade_volume", "0") or 0) // 1000,
             bid=Decimal(str(data.get("best_bid_price", [latest_price])[0])),
             ask=Decimal(str(data.get("best_ask_price", [latest_price])[0])),
-            limit_up=price,
-            limit_down=price,
+            limit_up=limit_up_from_prev_close(prev_close),
+            limit_down=limit_down_from_prev_close(prev_close),
             timestamp=datetime.now(),
             is_suspended=False,
         )

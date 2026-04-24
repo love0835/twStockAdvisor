@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pandas as pd
 import requests
 
 from twadvisor.fetchers.base import BaseFetcher, FetcherError, SymbolNotFoundError
+from twadvisor.fetchers.limits import limit_down_from_prev_close, limit_up_from_prev_close
 from twadvisor.models import ChipData, Quote
 
 FINMIND_API = "https://api.finmindtrade.com/api/v4/data"
@@ -26,16 +27,19 @@ class FinMindFetcher(BaseFetcher):
     async def get_quote(self, symbol: str) -> Quote:
         """Fetch a single quote from FinMind daily stock info."""
 
+        end = date.today()
+        start = end - timedelta(days=7)
         payload = self._request(
             dataset="TaiwanStockPrice",
             data_id=symbol,
-            start_date=str(date.today()),
-            end_date=str(date.today()),
+            start_date=str(start),
+            end_date=str(end),
         )
         records = payload.get("data", [])
         if not records:
             raise SymbolNotFoundError(symbol)
         latest = records[-1]
+        prev_close = Decimal(str(records[-2]["close"])) if len(records) >= 2 else Decimal(str(latest["close"]))
         return Quote(
             symbol=symbol,
             name=symbol,
@@ -43,12 +47,12 @@ class FinMindFetcher(BaseFetcher):
             open=Decimal(str(latest["open"])),
             high=Decimal(str(latest["max"])),
             low=Decimal(str(latest["min"])),
-            prev_close=Decimal(str(latest["close"])),
+            prev_close=prev_close,
             volume=int(latest["Trading_Volume"]) // 1000,
             bid=Decimal(str(latest["close"])),
             ask=Decimal(str(latest["close"])),
-            limit_up=Decimal(str(latest["close"])),
-            limit_down=Decimal(str(latest["close"])),
+            limit_up=limit_up_from_prev_close(prev_close),
+            limit_down=limit_down_from_prev_close(prev_close),
             timestamp=datetime.fromisoformat(latest["date"]),
             is_suspended=False,
         )
