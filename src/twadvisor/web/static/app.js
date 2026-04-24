@@ -183,12 +183,15 @@ function renderPortfolio(data) {
   updateAiDecisionButton();
 }
 
-function renderAnalysisResult(data, metaPrefix = "") {
-  document.getElementById("market-view").textContent = data.market_view;
-  document.getElementById("analyze-meta").textContent =
+function renderAnalysisResult(data, metaPrefix = "", target = {}) {
+  const viewId = target.viewId || "market-view";
+  const metaId = target.metaId || "analyze-meta";
+  const tableId = target.tableId || "analyze-table";
+  document.getElementById(viewId).textContent = data.market_view;
+  document.getElementById(metaId).textContent =
     `${metaPrefix}輸入 tokens: ${data.prompt_tokens}\n輸出 tokens: ${data.completion_tokens}`;
   renderTable(
-    "analyze-table",
+    tableId,
     data.recommendations.map((row) => [
       row.symbol,
       actionLabels[row.action] || row.action,
@@ -202,11 +205,23 @@ function renderAnalysisResult(data, metaPrefix = "") {
   );
 }
 
-async function runAiAnalysis({ strategy, watchlist, includePortfolio, holdingSymbols, metaPrefix, button }) {
+async function runAiAnalysis({
+  strategy,
+  watchlist,
+  includePortfolio,
+  holdingSymbols,
+  metaPrefix,
+  button,
+  target = {},
+  switchToAnalyze = true,
+}) {
   const restoreButton = button ? setButtonLoading(button, "AI 分析中...") : () => {};
-  document.getElementById("market-view").textContent = "正在抓取行情與技術指標，接著呼叫 AI 分析...";
-  document.getElementById("analyze-meta").textContent = "";
-  renderTable("analyze-table", []);
+  const viewId = target.viewId || "market-view";
+  const metaId = target.metaId || "analyze-meta";
+  const tableId = target.tableId || "analyze-table";
+  document.getElementById(viewId).textContent = "正在抓取行情與技術指標，接著呼叫 AI 分析...";
+  document.getElementById(metaId).textContent = "";
+  renderTable(tableId, []);
   try {
     const data = await fetchJson("/api/analyze", {
       method: "POST",
@@ -219,12 +234,16 @@ async function runAiAnalysis({ strategy, watchlist, includePortfolio, holdingSym
         storage_path: storagePath(),
       }),
     });
-    renderAnalysisResult(data, metaPrefix);
-    showPanel("analyze");
+    renderAnalysisResult(data, metaPrefix, target);
+    if (switchToAnalyze) {
+      showPanel("analyze");
+    }
   } catch (error) {
-    document.getElementById("market-view").textContent = error.message;
-    renderTable("analyze-table", []);
-    showPanel("analyze");
+    document.getElementById(viewId).textContent = error.message;
+    renderTable(tableId, []);
+    if (switchToAnalyze) {
+      showPanel("analyze");
+    }
   } finally {
     restoreButton();
   }
@@ -416,6 +435,12 @@ document.getElementById("portfolio-ai-btn").addEventListener("click", (event) =>
     holdingSymbols: holdings,
     metaPrefix: `持倉分析: ${holdings.join(", ")}\n`,
     button: event.currentTarget,
+    target: {
+      viewId: "portfolio-ai-view",
+      metaId: "portfolio-ai-meta",
+      tableId: "portfolio-ai-table",
+    },
+    switchToAnalyze: false,
   });
 });
 
