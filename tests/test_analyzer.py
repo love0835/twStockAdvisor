@@ -13,7 +13,11 @@ import anthropic
 import pytest
 
 from twadvisor.analyzer.claude import ClaudeAnalyzer
+from twadvisor.analyzer.factory import create_analyzer
+from twadvisor.analyzer.gemini import GeminiAnalyzer
+from twadvisor.analyzer.openai_analyzer import OpenAIAnalyzer
 from twadvisor.models import AnalysisRequest, Portfolio, Position, Quote, Strategy, TechnicalIndicators, ChipData
+from twadvisor.settings import load_settings
 
 
 def _request() -> AnalysisRequest:
@@ -155,3 +159,83 @@ async def test_token_usage_is_recorded(tmp_path: Path) -> None:
 
     assert rows[0][0] == "claude"
     assert rows[0][2] == 321
+
+
+@pytest.mark.asyncio
+async def test_openai_analyzer_records_structured_output(tmp_path: Path) -> None:
+    """OpenAI analyzer should parse JSON schema output and record token usage."""
+
+    payload = json.loads(Path("E:\\TwStockAdvisor\\tests\\fixtures\\ai_response_sample.json").read_text(encoding="utf-8"))
+
+    class StubResponses:
+        def create(self, **kwargs):
+            return SimpleNamespace(
+                status="completed",
+                output_text=json.dumps(payload),
+                usage=SimpleNamespace(input_tokens=210, output_tokens=80),
+                output=[],
+            )
+
+    analyzer = OpenAIAnalyzer(
+        api_key="token",
+        client=SimpleNamespace(responses=StubResponses()),
+        db_path=str(tmp_path / "openai.db"),
+    )
+    result = await analyzer.analyze(_request())
+
+    assert result.market_view == payload["market_view"]
+    assert result.recommendations[0].symbol == payload["recommendations"][0]["symbol"]
+
+
+@pytest.mark.asyncio
+async def test_gemini_analyzer_records_structured_output(tmp_path: Path) -> None:
+    """Gemini analyzer should parse JSON text output and record token usage."""
+
+    payload = json.loads(Path("E:\\TwStockAdvisor\\tests\\fixtures\\ai_response_sample.json").read_text(encoding="utf-8"))
+
+    class StubModels:
+        def generate_content(self, **kwargs):
+            return SimpleNamespace(
+                text=json.dumps(payload),
+                usage_metadata=SimpleNamespace(prompt_token_count=188, candidates_token_count=61),
+            )
+
+    analyzer = GeminiAnalyzer(
+        api_key="token",
+        client=SimpleNamespace(models=StubModels()),
+        db_path=str(tmp_path / "gemini.db"),
+    )
+    result = await analyzer.analyze(_request())
+
+    assert result.market_view == payload["market_view"]
+    assert result.raw_prompt_tokens == 188
+
+
+def test_create_analyzer_supports_multiple_providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Factory should instantiate the configured provider from keyring secrets."""
+
+    default_path = tmp_path / "default.toml"
+    default_path.write_text(
+        "\n".join(
+            [
+                "[app]",
+                f"db_path = \"{str(tmp_path / 'advisor.db').replace(chr(92), '/')}\"",
+                "[ai]",
+                "provider = \"openai\"",
+                "model_openai = \"gpt-4o\"",
+                "model_gemini = \"gemini-2.0-flash\"",
+                "[security]",
+                "keyring_service = \"twadvisor\"",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = load_settings(default_path=default_path, user_path=tmp_path / "missing.toml")
+    monkeypatch.setattr(
+        "twadvisor.analyzer.factory.KeyStore.get_secret",
+        lambda self, key: "token" if key == "openai" else None,
+    )
+
+    analyzer = create_analyzer(settings)
+
+    assert isinstance(analyzer, OpenAIAnalyzer)

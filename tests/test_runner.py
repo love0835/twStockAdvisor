@@ -101,24 +101,26 @@ async def test_runner_tick_notifies(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_runner_tick_skips_closed_session(tmp_path: Path) -> None:
+async def test_runner_tick_skips_closed_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Closed sessions should skip notification work."""
 
     manager = PortfolioManager(storage_path=tmp_path / "portfolio.json")
     settings = load_settings()
     notifier = StubNotifier()
     runner = AdvisorRunner(settings, StubFetcher(), StubAnalyzer(), manager, notifier, AdvisorRepository(str(tmp_path / "advisor.db")))
+    monkeypatch.setattr("twadvisor.scheduler.runner.MarketCalendar.current_session", lambda self, now: "closed")
     await runner.tick(Strategy.SWING, ["2330"])
     assert notifier.calls == []
 
 
 @pytest.mark.asyncio
-async def test_runner_start_exits_after_max_ticks_when_closed(tmp_path: Path) -> None:
+async def test_runner_start_exits_after_max_ticks_when_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Bounded runs should exit even when every session is closed."""
 
     manager = PortfolioManager(storage_path=tmp_path / "portfolio.json")
     settings = load_settings()
     notifier = StubNotifier()
     runner = AdvisorRunner(settings, StubFetcher(), StubAnalyzer(), manager, notifier, AdvisorRepository(str(tmp_path / "advisor.db")))
+    monkeypatch.setattr("twadvisor.scheduler.runner.MarketCalendar.current_session", lambda self, now: "closed")
     await runner.start(Strategy.SWING, ["2330"], interval_override=10, max_ticks=1)
     assert notifier.calls == []

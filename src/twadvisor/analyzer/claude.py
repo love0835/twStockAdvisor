@@ -3,18 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
-from decimal import Decimal
-from pathlib import Path
 
 import anthropic
 
-from twadvisor.analyzer.base import BaseAnalyzer
+from twadvisor.analyzer.base import BaseAnalyzer, build_analysis_prompt, parse_analysis_payload
 from twadvisor.analyzer.schema import RECOMMENDATION_TOOL_SCHEMA
 from twadvisor.analyzer.token_usage import record_token_usage
-from twadvisor.models import AnalysisRequest, AnalysisResponse, Recommendation
-
-PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
+from twadvisor.models import AnalysisRequest, AnalysisResponse
 
 
 class ClaudeAnalyzer(BaseAnalyzer):
@@ -45,56 +40,7 @@ class ClaudeAnalyzer(BaseAnalyzer):
     def build_prompt(self, req: AnalysisRequest) -> tuple[str, str]:
         """Build system and user prompts from the request."""
 
-        system_prompt = self._load_prompt("system.md")
-        strategy_file = {
-            "daytrade": "strategy_daytrade.md",
-            "swing": "strategy_swing.md",
-            "position": "strategy_swing.md",
-            "longterm": "strategy_longterm.md",
-            "dividend": "strategy_dividend.md",
-        }[req.strategy.value]
-        strategy_prompt = self._load_prompt(strategy_file)
-
-        positions_lines = []
-        for position in req.portfolio.positions:
-            quote = req.quotes.get(position.symbol)
-            price = quote.price if quote else Decimal("0")
-            pnl = (price - position.avg_cost) * Decimal(position.qty) if quote else Decimal("0")
-            positions_lines.append(
-                f"- {position.symbol}: qty={position.qty}, avg_cost={position.avg_cost}, price={price}, unrealized_pnl={pnl}"
-            )
-        if not positions_lines:
-            positions_lines.append("- no positions")
-
-        watchlist_lines = []
-        for symbol in req.watchlist:
-            quote = req.quotes[symbol]
-            indicator = req.indicators[symbol]
-            chip = req.chips[symbol]
-            watchlist_lines.append(
-                "\n".join(
-                    [
-                        f"### {symbol}",
-                        f"price={quote.price}, prev_close={quote.prev_close}, limit_up={quote.limit_up}, limit_down={quote.limit_down}",
-                        f"ma5={indicator.ma5}, ma20={indicator.ma20}, ma60={indicator.ma60}, kd_k={indicator.kd_k}, kd_d={indicator.kd_d}, macd={indicator.macd}, rsi14={indicator.rsi14}",
-                        f"foreign_net={chip.foreign_net}, trust_net={chip.trust_net}, dealer_net={chip.dealer_net}",
-                    ]
-                )
-            )
-
-        user_prompt = "\n\n".join(
-            [
-                f"## 策略\n{req.strategy.value}",
-                f"## 策略說明\n{strategy_prompt}",
-                f"## 風險偏好\n{req.risk_preference}",
-                f"## 現金\n{req.portfolio.cash}",
-                f"## 單檔上限\n{req.max_position_pct}",
-                "## 目前持倉\n" + "\n".join(positions_lines),
-                "## Watchlist\n" + "\n\n".join(watchlist_lines),
-                "## 任務\n請依據以上資料提出結構化建議，使用 submit_recommendations 工具回傳。",
-            ]
-        )
-        return system_prompt, user_prompt
+        return build_analysis_prompt(req)
 
     async def analyze(self, req: AnalysisRequest) -> AnalysisResponse:
         """Run Claude analysis and parse structured recommendations."""
@@ -154,31 +100,5 @@ class ClaudeAnalyzer(BaseAnalyzer):
 
         for block in getattr(response, "content", []):
             if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == "submit_recommendations":
-                payload = block.input
-                recommendations = [
-                    Recommendation(
-                        symbol=item["symbol"],
-                        action=item["action"],
-                        qty=item.get("qty", 0),
-                        order_type=item.get("order_type", "limit"),
-                        price=item.get("price"),
-                        stop_loss=item.get("stop_loss"),
-                        take_profit=item.get("take_profit"),
-                        reason=item["reason"],
-                        confidence=item["confidence"],
-                        strategy=req.strategy,
-                        generated_at=datetime.now(),
-                    )
-                    for item in payload.get("recommendations", [])
-                ]
-                return AnalysisResponse(
-                    recommendations=recommendations,
-                    market_view=payload["market_view"],
-                    warnings=payload.get("warnings", []),
-                )
+                return parse_analysis_payload(block.input, req)
         raise ValueError("Claude response did not contain a submit_recommendations tool_use block")
-
-    def _load_prompt(self, filename: str) -> str:
-        """Read a prompt template from disk."""
-
-        return (PROMPTS_DIR / filename).read_text(encoding="utf-8")
