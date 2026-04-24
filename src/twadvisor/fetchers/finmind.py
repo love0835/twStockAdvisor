@@ -96,7 +96,12 @@ class FinMindFetcher(BaseFetcher):
         records = payload.get("data", [])
         if not records:
             raise SymbolNotFoundError(symbol)
-        grouped: dict[str, int] = {entry["name"]: int(entry["buy_sell"]) for entry in records}
+        grouped: dict[str, int] = {
+            entry["name"]: int(entry["buy"]) - int(entry["sell"])
+            if "buy" in entry and "sell" in entry
+            else int(entry.get("buy_sell", 0))
+            for entry in records
+        }
         return ChipData(
             symbol=symbol,
             foreign_net=grouped.get("Foreign_Investor", 0),
