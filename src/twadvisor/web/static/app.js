@@ -5,6 +5,13 @@ const panelMeta = {
   backtest: ["回測", "用歷史 K 線檢查策略表現"],
 };
 
+const actionLabels = {
+  buy: "買進",
+  sell: "賣出",
+  hold: "持有",
+  watch: "觀察",
+};
+
 function showPanel(panel) {
   document.querySelectorAll(".nav-btn").forEach((button) => {
     button.classList.toggle("active", button.dataset.panel === panel);
@@ -135,12 +142,12 @@ document.getElementById("analyze-form").addEventListener("submit", async (event)
       body: JSON.stringify(payload),
     });
     document.getElementById("market-view").textContent = data.market_view;
-    document.getElementById("analyze-meta").textContent = `prompt tokens: ${data.prompt_tokens}\ncompletion tokens: ${data.completion_tokens}`;
+    document.getElementById("analyze-meta").textContent = `輸入 tokens: ${data.prompt_tokens}\n輸出 tokens: ${data.completion_tokens}`;
     renderTable(
       "analyze-table",
       data.recommendations.map((row) => [
         row.symbol,
-        row.action,
+        actionLabels[row.action] || row.action,
         String(row.qty),
         row.price,
         row.warnings,
