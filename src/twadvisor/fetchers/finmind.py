@@ -9,20 +9,35 @@ import pandas as pd
 import requests
 
 from twadvisor.fetchers.base import BaseFetcher, FetcherError, SymbolNotFoundError
+from twadvisor.fetchers.finmind_keys import FinMindKeyRotator
 from twadvisor.fetchers.limits import limit_down_from_prev_close, limit_up_from_prev_close
 from twadvisor.models import ChipData, Quote
 
 FINMIND_API = "https://api.finmindtrade.com/api/v4/data"
 
 
+class FinMindStatusError(FetcherError):
+    """Raised when FinMind returns a concrete HTTP/API status code."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        super().__init__(f"FinMind request failed: {status_code}")
+
+
 class FinMindFetcher(BaseFetcher):
     """Fetcher backed by the FinMind API."""
 
-    def __init__(self, api_token: str, timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        api_token: str | None = None,
+        timeout: float = 10.0,
+        key_rotator: FinMindKeyRotator | None = None,
+    ) -> None:
         """Create a FinMind fetcher."""
 
         self.api_token = api_token
         self.timeout = timeout
+        self.key_rotator = key_rotator
 
     async def get_quote(self, symbol: str) -> Quote:
         """Fetch a single quote from FinMind daily stock info."""
@@ -119,11 +134,54 @@ class FinMindFetcher(BaseFetcher):
     def _request(self, **params: str) -> dict:
         """Perform a FinMind request and return the JSON payload."""
 
-        headers = {"Authorization": f"Bearer {self.api_token}"}
+        if self.key_rotator is not None:
+            return self._request_with_rotator(**params)
+        if not self.api_token:
+            raise FetcherError("FinMind API token is not configured")
+        return self._request_once(self.api_token, **params)
+
+    def _request_with_rotator(self, **params: str) -> dict:
+        """Perform a FinMind request and rotate keys on configured status codes."""
+
+        last_error: FinMindStatusError | None = None
+        for api_key in self.key_rotator.iter_available_keys():
+            try:
+                payload = self._request_once(api_key.token, **params)
+            except FinMindStatusError as exc:
+                if self.key_rotator.should_rotate(exc.status_code):
+                    self.key_rotator.mark_exhausted(api_key, exc.status_code)
+                    last_error = exc
+                    continue
+                raise
+            self.key_rotator.mark_success(api_key)
+            return payload
+
+        if last_error is not None:
+            raise FetcherError(
+                f"FinMind request failed: {last_error.status_code}; all configured FinMind API keys are temporarily exhausted"
+            ) from last_error
+        raise FetcherError("No available FinMind API keys")
+
+    def _request_once(self, api_token: str, **params: str) -> dict:
+        """Perform one FinMind request using the provided token."""
+
+        headers = {"Authorization": f"Bearer {api_token}"}
         response = requests.get(FINMIND_API, params=params, headers=headers, timeout=self.timeout)
         if response.status_code >= 400:
-            raise FetcherError(f"FinMind request failed: {response.status_code}")
+            raise FinMindStatusError(response.status_code)
         payload = response.json()
+        payload_status = _payload_status_code(payload.get("status"))
+        if payload_status is not None and payload_status >= 400:
+            raise FinMindStatusError(payload_status)
         if not payload.get("status", 0):
             raise FetcherError("FinMind returned an unsuccessful response")
         return payload
+
+
+def _payload_status_code(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

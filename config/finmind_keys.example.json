@@ -1,0 +1,16 @@
+{
+  "keys": [
+    {
+      "name": "finmind_1",
+      "token": "paste_your_key_here",
+      "enabled": true
+    },
+    {
+      "name": "finmind_2",
+      "token": "paste_your_key_here",
+      "enabled": false
+    }
+  ],
+  "rotate_on_status": [402],
+  "cooldown_hours": 24
+}

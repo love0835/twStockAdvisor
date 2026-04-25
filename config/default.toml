@@ -13,6 +13,8 @@ primary = "finmind"
 fallback = ["twstock", "yahoo"]
 cache_ttl_quote = 3
 cache_ttl_indicators = 300
+finmind_keys_path = "data/finmind_keys.local.json"
+finmind_key_state_path = "data/finmind_key_state.json"
 
 [ai]
 provider = "claude"

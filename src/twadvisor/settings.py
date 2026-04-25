@@ -35,6 +35,8 @@ class FetcherSettings(BaseModel):
     fallback: list[str] = Field(default_factory=lambda: ["twstock", "yahoo"])
     cache_ttl_quote: int = 3
     cache_ttl_indicators: int = 300
+    finmind_keys_path: str = "data/finmind_keys.local.json"
+    finmind_key_state_path: str = "data/finmind_key_state.json"
 
 
 class AISettings(BaseModel):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+import json
 
 import pandas as pd
 import pytest
@@ -12,6 +13,7 @@ from twadvisor.fetchers.base import FetcherError, SymbolNotFoundError
 from twadvisor.fetchers.cache import TTLCache
 from twadvisor.fetchers.factory import create_fetcher
 from twadvisor.fetchers.finmind import FinMindFetcher
+from twadvisor.fetchers.finmind_keys import FinMindKeyRotator
 from twadvisor.fetchers.twstock_fetcher import TwstockFetcher
 from twadvisor.fetchers.yahoo import YahooFinanceFetcher
 from twadvisor.models import ChipData, Quote
@@ -57,6 +59,39 @@ def test_create_fetcher_prefers_finmind_when_token_exists(tmp_path, monkeypatch:
 
     fetcher = create_fetcher(settings)
     assert isinstance(fetcher, FinMindFetcher)
+
+
+def test_create_fetcher_prefers_local_finmind_key_file(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fetcher factory should use the local FinMind key file before keyring."""
+
+    key_config = tmp_path / "finmind_keys.local.json"
+    key_state = tmp_path / "finmind_key_state.json"
+    key_config.write_text(
+        json.dumps({"keys": [{"name": "finmind_1", "token": "token-one", "enabled": True}]}),
+        encoding="utf-8",
+    )
+    default_path = tmp_path / "default.toml"
+    default_path.write_text(
+        "\n".join(
+            [
+                "[fetcher]",
+                'primary = "finmind"',
+                'fallback = ["twstock"]',
+                f'finmind_keys_path = "{key_config.as_posix()}"',
+                f'finmind_key_state_path = "{key_state.as_posix()}"',
+                "[security]",
+                'keyring_service = "twadvisor"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = load_settings(default_path=default_path, user_path=tmp_path / "missing.toml")
+    monkeypatch.setattr("twadvisor.fetchers.factory.KeyStore.get_secret", lambda self, key: None)
+
+    fetcher = create_fetcher(settings)
+
+    assert isinstance(fetcher, FinMindFetcher)
+    assert fetcher.key_rotator is not None
 
 
 def test_create_fetcher_uses_yahoo_primary(tmp_path) -> None:
@@ -176,6 +211,54 @@ def test_finmind_request_error_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     with pytest.raises(FetcherError):
         fetcher._request(dataset="TaiwanStockPrice")
+
+
+def test_finmind_request_rotates_local_keys_on_402(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """FinMind 402 should retire the active local key and retry with the next one."""
+
+    class StubResponse:
+        def __init__(self, status_code: int, payload: dict) -> None:
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self) -> dict:
+            return self._payload
+
+    key_config = tmp_path / "finmind_keys.local.json"
+    key_state = tmp_path / "finmind_key_state.json"
+    key_config.write_text(
+        json.dumps(
+            {
+                "keys": [
+                    {"name": "finmind_1", "token": "token-one", "enabled": True},
+                    {"name": "finmind_2", "token": "token-two", "enabled": True},
+                ],
+                "rotate_on_status": [402],
+                "cooldown_hours": 24,
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    def fake_get(*args, **kwargs):
+        calls.append(kwargs["headers"]["Authorization"])
+        if len(calls) == 1:
+            return StubResponse(402, {"status": 402})
+        return StubResponse(200, {"status": 200, "data": [{"stock_id": "2330"}]})
+
+    monkeypatch.setattr("twadvisor.fetchers.finmind.requests.get", fake_get)
+    rotator = FinMindKeyRotator.from_file(key_config, key_state)
+    assert rotator is not None
+    fetcher = FinMindFetcher(key_rotator=rotator)
+
+    payload = fetcher._request(dataset="TaiwanStockPrice")
+
+    assert payload["data"][0]["stock_id"] == "2330"
+    assert calls == ["Bearer token-one", "Bearer token-two"]
+    state = json.loads(key_state.read_text(encoding="utf-8"))
+    assert state["current_name"] == "finmind_2"
+    assert "finmind_1" in state["exhausted"]
 
 
 @pytest.mark.asyncio
