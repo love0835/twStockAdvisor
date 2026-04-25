@@ -14,7 +14,7 @@ from twadvisor.models import AnalysisResponse, ChipData, Quote, Recommendation, 
 from twadvisor.settings import load_settings
 from twadvisor.storage.repo import AdvisorRepository
 from twadvisor.web.app import create_app
-from twadvisor.web.routes import _ANALYZE_INPUT_CACHE
+from twadvisor.web.routes import _ANALYZE_INPUT_CACHE, _format_lots
 
 
 def _settings(tmp_path: Path):
@@ -84,6 +84,14 @@ def test_bootstrap_lists_ai_provider_options(tmp_path: Path, monkeypatch) -> Non
         "source": "file",
     }
     assert "openai-local-token" not in response.text
+
+
+def test_format_lots_uses_plain_numbers() -> None:
+    """Recommendation lots should not render Decimal scientific notation."""
+
+    assert _format_lots(0) == "0"
+    assert _format_lots(10_000) == "10 張"
+    assert _format_lots(1_500) == "1.5 張（零股 1500 股）"
 
 
 def test_portfolio_import_and_read(tmp_path: Path, monkeypatch) -> None:

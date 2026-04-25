@@ -667,8 +667,11 @@ def _localize_warning_text(text: str) -> str:
 def _format_lots(qty: int) -> str:
     if qty == 0:
         return "0"
+    if qty % 1000 == 0:
+        return f"{qty // 1000} 張"
     lots = Decimal(qty) / Decimal("1000")
-    return f"{lots.normalize()} 張" if qty % 1000 == 0 else f"{lots.normalize()} 張（零股 {qty} 股）"
+    lots_text = format(lots.normalize(), "f").rstrip("0").rstrip(".")
+    return f"{lots_text} 張（零股 {qty} 股）"
 
 
 @router.post("/screener/daytrade")
