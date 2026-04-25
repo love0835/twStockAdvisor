@@ -9,6 +9,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
+from twadvisor.analyzer.api_keys import ai_provider_options, resolve_ai_provider
 from twadvisor.analyzer.factory import create_analyzer
 from twadvisor.analyzer.token_usage import reset_token_usage_user, set_token_usage_user
 from twadvisor.auth import AuthService, CurrentUser, SESSION_COOKIE_NAME
@@ -91,9 +92,15 @@ async def bootstrap() -> dict[str, object]:
     """Bootstrap payload for the frontend shell."""
 
     settings = load_settings()
+    provider = resolve_ai_provider(settings)
     return {
         "app_name": "TwStockAdvisor",
-        "provider": settings.ai.provider,
+        "provider": provider,
+        "ai": {
+            "provider": provider,
+            "providers": ai_provider_options(settings),
+            "keys_path": settings.ai.keys_path,
+        },
         "sections": ["portfolio", "analyze", "report", "backtest"],
     }
 
@@ -375,8 +382,9 @@ async def analyze(payload: AnalyzePayload, user: CurrentUser = Depends(_current_
 
     settings = load_settings()
     fetcher = create_fetcher(settings)
+    provider = _requested_ai_provider(settings, payload.provider)
     try:
-        analyzer = create_analyzer(settings)
+        analyzer = create_analyzer(settings, provider=provider)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -445,7 +453,7 @@ async def analyze(payload: AnalyzePayload, user: CurrentUser = Depends(_current_
     total_equity = repo.save_portfolio_snapshot(portfolio, request.quotes, user_id=user.id)
     repo.upsert_performance_daily(total_equity)
     repo.save_recommendations(response.recommendations, response.market_view, response.warnings, user_id=user.id)
-    return _serialize_analysis_response(response, request, portfolio, settings.risk.max_position_pct)
+    return _serialize_analysis_response(response, request, portfolio, settings.risk.max_position_pct, ai_provider=provider)
 
 
 @router.post("/screener/decision")
@@ -455,8 +463,9 @@ async def screener_decision(payload: ScreenerDecisionPayload, user: CurrentUser 
     if not payload.candidates:
         raise HTTPException(status_code=400, detail="No scanner candidates provided")
     settings = load_settings()
+    provider = _requested_ai_provider(settings, payload.provider)
     try:
-        analyzer = create_analyzer(settings)
+        analyzer = create_analyzer(settings, provider=provider)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -499,7 +508,14 @@ async def screener_decision(payload: ScreenerDecisionPayload, user: CurrentUser 
         raise HTTPException(status_code=502, detail=f"AI analysis failed: {exc}") from exc
 
     response.warnings = [*warnings, *response.warnings]
-    return _serialize_analysis_response(response, request, portfolio, settings.risk.max_position_pct)
+    return _serialize_analysis_response(response, request, portfolio, settings.risk.max_position_pct, ai_provider=provider)
+
+
+def _requested_ai_provider(settings, provider: str | None) -> str:
+    try:
+        return resolve_ai_provider(settings, provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _select_ai_portfolio(
@@ -532,6 +548,8 @@ def _serialize_analysis_response(
     request: AnalysisRequest,
     portfolio: Portfolio,
     max_position_pct: float,
+    *,
+    ai_provider: str,
 ) -> dict[str, object]:
     rows = []
     for recommendation in response.recommendations:
@@ -551,6 +569,7 @@ def _serialize_analysis_response(
             warning_text = _localize_warning_text(f"blocked: {exc}")
         rows.append(_serialize_recommendation_row(recommendation, warning_text))
     return {
+        "provider": ai_provider,
         "market_view": response.market_view,
         "recommendations": rows,
         "warnings": [_localize_warning_text(warning) for warning in response.warnings],

@@ -233,10 +233,53 @@ def test_create_analyzer_supports_multiple_providers(tmp_path: Path, monkeypatch
     )
     settings = load_settings(default_path=default_path, user_path=tmp_path / "missing.toml")
     monkeypatch.setattr(
-        "twadvisor.analyzer.factory.KeyStore.get_secret",
+        "twadvisor.analyzer.api_keys.KeyStore.get_secret",
         lambda self, key: "token" if key == "openai" else None,
     )
 
     analyzer = create_analyzer(settings)
 
     assert isinstance(analyzer, OpenAIAnalyzer)
+
+
+def test_create_analyzer_prefers_local_ai_key_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Factory should read AI provider keys from the ignored local JSON file."""
+
+    keys_path = tmp_path / "ai_keys.local.json"
+    keys_path.write_text(
+        json.dumps(
+            {
+                "default_provider": "chatgpt",
+                "providers": {
+                    "chatgpt": {"api_key": "openai-local-token", "enabled": True},
+                    "gemini": {"api_key": "gemini-local-token", "enabled": True},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    default_path = tmp_path / "default.toml"
+    default_path.write_text(
+        "\n".join(
+            [
+                "[app]",
+                f"db_path = \"{str(tmp_path / 'advisor.db').replace(chr(92), '/')}\"",
+                "[ai]",
+                "provider = \"claude\"",
+                f"keys_path = \"{keys_path.as_posix()}\"",
+                "model_openai = \"gpt-4o\"",
+                "model_gemini = \"gemini-2.0-flash\"",
+                "[security]",
+                "keyring_service = \"twadvisor\"",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = load_settings(default_path=default_path, user_path=tmp_path / "missing.toml")
+    monkeypatch.setattr("twadvisor.analyzer.api_keys.KeyStore.get_secret", lambda self, key: None)
+
+    analyzer = create_analyzer(settings)
+    override = create_analyzer(settings, provider="gemini")
+
+    assert isinstance(analyzer, OpenAIAnalyzer)
+    assert isinstance(override, GeminiAnalyzer)

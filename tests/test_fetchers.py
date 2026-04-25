@@ -36,7 +36,17 @@ def test_create_fetcher_falls_back_to_twstock(tmp_path, monkeypatch: pytest.Monk
 
     default_path = tmp_path / "default.toml"
     default_path.write_text(
-        "[fetcher]\nprimary = \"finmind\"\nfallback = [\"twstock\", \"yahoo\"]\n[security]\nkeyring_service = \"twadvisor\"\n",
+        "\n".join(
+            [
+                "[fetcher]",
+                'primary = "finmind"',
+                'fallback = ["twstock", "yahoo"]',
+                f'finmind_keys_path = "{(tmp_path / "missing_finmind_keys.json").as_posix()}"',
+                f'finmind_key_state_path = "{(tmp_path / "finmind_key_state.json").as_posix()}"',
+                "[security]",
+                'keyring_service = "twadvisor"',
+            ]
+        ),
         encoding="utf-8",
     )
     settings = load_settings(default_path=default_path, user_path=tmp_path / "missing.toml")
@@ -51,7 +61,17 @@ def test_create_fetcher_prefers_finmind_when_token_exists(tmp_path, monkeypatch:
 
     default_path = tmp_path / "default.toml"
     default_path.write_text(
-        "[fetcher]\nprimary = \"finmind\"\nfallback = [\"twstock\"]\n[security]\nkeyring_service = \"twadvisor\"\n",
+        "\n".join(
+            [
+                "[fetcher]",
+                'primary = "finmind"',
+                'fallback = ["twstock"]',
+                f'finmind_keys_path = "{(tmp_path / "missing_finmind_keys.json").as_posix()}"',
+                f'finmind_key_state_path = "{(tmp_path / "finmind_key_state.json").as_posix()}"',
+                "[security]",
+                'keyring_service = "twadvisor"',
+            ]
+        ),
         encoding="utf-8",
     )
     settings = load_settings(default_path=default_path, user_path=tmp_path / "missing.toml")

@@ -52,6 +52,10 @@
           </div>
           <div class="topbar-actions">
             <div class="status-pill" id="current-user-pill">未登入</div>
+            <label class="provider-picker" title="選擇本次 AI 分析供應商">
+              <span>AI</span>
+              <select id="ai-provider-select"></select>
+            </label>
             <button class="secondary-btn compact-btn" id="change-password-btn">改密碼</button>
             <button class="secondary-btn compact-btn" id="logout-btn">登出</button>
             <div class="status-pill" id="health-pill">API 連線中</div>
@@ -81,7 +85,7 @@
               <button class="secondary-btn" id="select-all-holdings">全選</button>
               <button class="secondary-btn" id="clear-all-holdings">取消</button>
               <button class="primary-btn" id="portfolio-ai-btn">用 AI 分析勾選持倉</button>
-              <span class="api-note cost">行情 API + Claude</span>
+              <span class="api-note cost" data-ai-provider-note>行情 API + AI</span>
               <span id="portfolio-ai-hint">已選 0 檔</span>
             </div>
             <div class="table-wrap">
@@ -155,7 +159,7 @@
               <label><span>持倉檔案</span><input name="storage_path" value="data/portfolio.json" /></label>
               <label class="checkbox"><input type="checkbox" name="include_portfolio" /><span>參考持倉與現金</span></label>
               <button type="submit" class="primary-btn">執行分析</button>
-              <span class="api-note cost">行情 API + Claude</span>
+              <span class="api-note cost" data-ai-provider-note>行情 API + AI</span>
             </form>
           </section>
 
@@ -195,7 +199,7 @@
             <div class="scanner-decision-actions">
               <label class="checkbox"><input type="checkbox" id="scanner-include-portfolio" /><span>參考持倉與現金</span></label>
               <button class="secondary-btn" id="scanner-ai-decision-btn" disabled>用 AI 做交易決策</button>
-              <span class="api-note cost">只用 Claude，不重抓行情</span>
+              <span class="api-note cost" data-ai-provider-note data-no-market-refetch="true">AI 決策，不重抓行情</span>
               <span id="scanner-decision-hint">請先掃描出候選標的</span>
             </div>
           </section>
@@ -281,6 +285,6 @@
         </section>
       </main>
     </div>
-    <script src="/static/app.js?v=20260425-api-cost-labels"></script>
+    <script src="/static/app.js?v=20260425-ai-provider-select"></script>
   </body>
 </html>

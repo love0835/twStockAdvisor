@@ -9,6 +9,7 @@ class AnalyzePayload(BaseModel):
     """Request body for single-run analysis."""
 
     strategy: str
+    provider: str | None = None
     watchlist: list[str] = Field(default_factory=list)
     include_portfolio: bool = False
     holding_symbols: list[str] = Field(default_factory=list)
@@ -129,6 +130,7 @@ class ScreenerDecisionPayload(BaseModel):
     """Request body for AI decisions based on scanner rows."""
 
     strategy: str
+    provider: str | None = None
     candidates: list[ScreenerDecisionCandidate] = Field(default_factory=list)
     include_portfolio: bool = False
     holding_symbols: list[str] = Field(default_factory=list)

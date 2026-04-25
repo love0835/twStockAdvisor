@@ -8,6 +8,12 @@ const panelMeta = {
 
 const actionLabels = { buy: "買進", sell: "賣出", hold: "持有", watch: "觀察" };
 
+const fallbackAiProviders = [
+  { provider: "claude", label: "Claude", configured: false },
+  { provider: "openai", label: "ChatGPT", configured: false },
+  { provider: "gemini", label: "Gemini", configured: false },
+];
+
 let currentUser = null;
 let portfolioSymbols = [];
 let selectedHoldingSymbols = new Set();
@@ -15,6 +21,8 @@ let hasLoadedPortfolio = false;
 let lastScannerSource = null;
 let lastScannerSymbols = [];
 let lastScannerRecommendations = [];
+let aiProviders = fallbackAiProviders;
+let currentAiProvider = "claude";
 
 function $(id) {
   return document.getElementById(id);
@@ -63,6 +71,56 @@ function parseSymbolList(value) {
   return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function aiProviderLabel(provider) {
+  const option = aiProviders.find((item) => item.provider === provider);
+  return option ? option.label : provider;
+}
+
+function selectedAiProvider() {
+  const select = $("ai-provider-select");
+  return select && select.value ? select.value : currentAiProvider;
+}
+
+function updateAiProviderNotes() {
+  currentAiProvider = selectedAiProvider();
+  const label = aiProviderLabel(currentAiProvider);
+  document.querySelectorAll("[data-ai-provider-note]").forEach((node) => {
+    node.textContent = node.dataset.noMarketRefetch ? `${label}，不重抓行情` : `行情 API + ${label}`;
+  });
+}
+
+function configureAiProviders(ai = {}) {
+  aiProviders = Array.isArray(ai.providers) && ai.providers.length ? ai.providers : fallbackAiProviders;
+  currentAiProvider = ai.provider || currentAiProvider;
+  const select = $("ai-provider-select");
+  if (!select) return;
+  select.innerHTML = "";
+  aiProviders.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.provider;
+    option.textContent = item.configured ? item.label : `${item.label}（未設定）`;
+    option.disabled = !item.configured;
+    select.appendChild(option);
+  });
+  const preferred = aiProviders.find((item) => item.provider === currentAiProvider && item.configured)
+    || aiProviders.find((item) => item.configured)
+    || aiProviders[0];
+  if (preferred) {
+    select.value = preferred.provider;
+    currentAiProvider = preferred.provider;
+  }
+  updateAiProviderNotes();
+}
+
+async function loadBootstrap() {
+  try {
+    const data = await fetchJson("/api/bootstrap");
+    configureAiProviders(data.ai || { provider: data.provider });
+  } catch {
+    configureAiProviders();
+  }
+}
+
 function storagePath() {
   const field = document.querySelector("#analyze-form input[name='storage_path']");
   return field ? field.value : "data/portfolio.json";
@@ -103,6 +161,7 @@ function showApp(user) {
   $("current-user-pill").textContent = `${user.display_name} (${user.role})`;
   $("admin-nav-btn").classList.toggle("hidden", user.role !== "admin");
   showPanel("portfolio");
+  loadBootstrap();
   loadHealth();
   loadPortfolio();
 }
@@ -216,7 +275,8 @@ function renderAnalysisResult(data, metaPrefix = "", target = {}) {
   const recommendations = data.recommendations || [];
   $(viewId).textContent = data.market_view || (recommendations.length ? "AI 已完成分析。" : "AI 沒有回傳可執行建議。");
   const warnings = (data.warnings || []).length ? `\n提醒: ${data.warnings.join("; ")}` : "";
-  $(metaId).textContent = `${metaPrefix}輸入 tokens: ${data.prompt_tokens}\n輸出 tokens: ${data.completion_tokens}${warnings}`;
+  const provider = aiProviderLabel(data.provider || selectedAiProvider());
+  $(metaId).textContent = `${metaPrefix}AI: ${provider}\n輸入 tokens: ${data.prompt_tokens}\n輸出 tokens: ${data.completion_tokens}${warnings}`;
   renderTable(tableId, recommendations.map((row) => [
     row.symbol,
     actionLabels[row.action] || row.action,
@@ -231,6 +291,7 @@ function renderAnalysisResult(data, metaPrefix = "", target = {}) {
 
 async function runAiAnalysis({ strategy, watchlist, includePortfolio, holdingSymbols, metaPrefix, button, target = {}, switchToAnalyze = true }) {
   const restoreButton = button ? setButtonLoading(button, "AI 分析中...") : () => {};
+  const provider = selectedAiProvider();
   const viewId = target.viewId || "market-view";
   const metaId = target.metaId || "analyze-meta";
   const tableId = target.tableId || "analyze-table";
@@ -241,7 +302,7 @@ async function runAiAnalysis({ strategy, watchlist, includePortfolio, holdingSym
     const data = await fetchJson("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ strategy, watchlist, include_portfolio: includePortfolio, holding_symbols: holdingSymbols, storage_path: storagePath() }),
+      body: JSON.stringify({ strategy, provider, watchlist, include_portfolio: includePortfolio, holding_symbols: holdingSymbols, storage_path: storagePath() }),
     });
     renderAnalysisResult(data, metaPrefix, target);
     if (switchToAnalyze) showPanel("analyze");
@@ -257,6 +318,7 @@ async function runAiAnalysis({ strategy, watchlist, includePortfolio, holdingSym
 
 async function runScannerDecision({ strategy, candidates, includePortfolio, holdingSymbols, metaPrefix, button }) {
   const restoreButton = button ? setButtonLoading(button, "AI 決策中...") : () => {};
+  const provider = selectedAiProvider();
   $("market-view").textContent = "正在把掃描結果交給 AI 做交易決策，不會重新抓 FinMind 行情...";
   $("analyze-meta").textContent = metaPrefix ? `${metaPrefix}狀態: 已送出，等待 AI 回應...` : "狀態: 已送出，等待 AI 回應...";
   renderTable("analyze-table", []);
@@ -264,7 +326,7 @@ async function runScannerDecision({ strategy, candidates, includePortfolio, hold
     const data = await fetchJson("/api/screener/decision", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ strategy, candidates, include_portfolio: includePortfolio, holding_symbols: holdingSymbols, storage_path: storagePath() }),
+      body: JSON.stringify({ strategy, provider, candidates, include_portfolio: includePortfolio, holding_symbols: holdingSymbols, storage_path: storagePath() }),
     });
     renderAnalysisResult(data, metaPrefix);
     showPanel("analyze");
@@ -401,6 +463,7 @@ async function runScanner(source, button) {
 
 function bindEvents() {
   document.querySelectorAll(".nav-btn").forEach((button) => button.addEventListener("click", () => showPanel(button.dataset.panel)));
+  $("ai-provider-select").addEventListener("change", updateAiProviderNotes);
 
   $("login-form").addEventListener("submit", async (event) => {
     event.preventDefault();

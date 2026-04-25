@@ -52,6 +52,40 @@ def test_health_endpoint() -> None:
     assert response.json()["status"] == "ok"
 
 
+def test_bootstrap_lists_ai_provider_options(tmp_path: Path, monkeypatch) -> None:
+    """Bootstrap should expose provider availability without exposing API keys."""
+
+    keys_path = tmp_path / "ai_keys.local.json"
+    keys_path.write_text(
+        '{"default_provider":"chatgpt","providers":{"chatgpt":{"api_key":"openai-local-token","enabled":true}}}',
+        encoding="utf-8",
+    )
+    default_path = tmp_path / "default.toml"
+    default_path.write_text(
+        f"[ai]\nprovider = \"claude\"\nkeys_path = \"{keys_path.as_posix()}\"\n[security]\nkeyring_service = \"twadvisor\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "twadvisor.web.routes.load_settings",
+        lambda: load_settings(default_path=default_path, user_path=tmp_path / "missing.toml"),
+    )
+    monkeypatch.setattr("twadvisor.analyzer.api_keys.KeyStore.get_secret", lambda self, key: None)
+    client = TestClient(create_app())
+
+    response = client.get("/api/bootstrap")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "openai"
+    assert payload["ai"]["providers"][1] == {
+        "provider": "openai",
+        "label": "ChatGPT",
+        "configured": True,
+        "source": "file",
+    }
+    assert "openai-local-token" not in response.text
+
+
 def test_portfolio_import_and_read(tmp_path: Path, monkeypatch) -> None:
     """Portfolio endpoints should import CSV data and read it back."""
 
@@ -311,12 +345,19 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
             )
 
     monkeypatch.setattr("twadvisor.web.routes.create_fetcher", lambda settings: StubFetcher())
-    monkeypatch.setattr("twadvisor.web.routes.create_analyzer", lambda settings: StubAnalyzer())
+    captured_provider: dict[str, str | None] = {}
+
+    def create_stub_analyzer(settings, provider=None):
+        captured_provider["provider"] = provider
+        return StubAnalyzer()
+
+    monkeypatch.setattr("twadvisor.web.routes.create_analyzer", create_stub_analyzer)
 
     response = client.post(
         "/api/analyze",
         json={
             "strategy": "swing",
+            "provider": "gemini",
             "watchlist": ["2330"],
             "storage_path": str(storage),
         },
@@ -329,6 +370,8 @@ def test_analyze_endpoint(tmp_path: Path, monkeypatch) -> None:
     assert payload["recommendations"][0]["price"] == "600"
     assert payload["recommendations"][0]["stop_loss"] == "570"
     assert payload["recommendations"][0]["take_profit"] == "660"
+    assert payload["provider"] == "gemini"
+    assert captured_provider["provider"] == "gemini"
     assert StubAnalyzer.seen_positions == []
     assert StubFetcher.calls == ["2330"]
 
@@ -396,7 +439,13 @@ def test_screener_decision_reuses_scanner_rows(tmp_path: Path, monkeypatch) -> N
             )
 
     monkeypatch.setattr("twadvisor.web.routes.create_fetcher", fail_fetcher)
-    monkeypatch.setattr("twadvisor.web.routes.create_analyzer", lambda settings: StubAnalyzer())
+    captured_provider: dict[str, str | None] = {}
+
+    def create_stub_analyzer(settings, provider=None):
+        captured_provider["provider"] = provider
+        return StubAnalyzer()
+
+    monkeypatch.setattr("twadvisor.web.routes.create_analyzer", create_stub_analyzer)
     client = TestClient(create_app())
     _login(client)
 
@@ -404,6 +453,7 @@ def test_screener_decision_reuses_scanner_rows(tmp_path: Path, monkeypatch) -> N
         "/api/screener/decision",
         json={
             "strategy": "daytrade",
+            "provider": "chatgpt",
             "candidates": [
                 {
                     "symbol": "2330",
@@ -422,5 +472,7 @@ def test_screener_decision_reuses_scanner_rows(tmp_path: Path, monkeypatch) -> N
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["provider"] == "openai"
+    assert captured_provider["provider"] == "openai"
     assert payload["recommendations"][0]["symbol"] == "2330"
     assert "未重新呼叫 FinMind" in payload["warnings"][0]

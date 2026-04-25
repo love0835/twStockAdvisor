@@ -18,6 +18,7 @@ finmind_key_state_path = "data/finmind_key_state.json"
 
 [ai]
 provider = "claude"
+keys_path = "data/ai_keys.local.json"
 model_claude = "claude-sonnet-4-20250514"
 model_openai = "gpt-4o"
 model_gemini = "gemini-2.0-flash"

@@ -43,6 +43,7 @@ class AISettings(BaseModel):
     """AI provider settings."""
 
     provider: str = "claude"
+    keys_path: str = "data/ai_keys.local.json"
     model_claude: str = "claude-sonnet-4-20250514"
     model_openai: str = "gpt-4o"
     model_gemini: str = "gemini-2.0-flash"

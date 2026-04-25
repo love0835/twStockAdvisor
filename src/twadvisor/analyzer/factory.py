@@ -2,22 +2,19 @@
 
 from __future__ import annotations
 
+from twadvisor.analyzer.api_keys import resolve_ai_api_key, resolve_ai_provider
 from twadvisor.analyzer.claude import ClaudeAnalyzer
 from twadvisor.analyzer.gemini import GeminiAnalyzer
 from twadvisor.analyzer.openai_analyzer import OpenAIAnalyzer
-from twadvisor.security.keystore import KeyStore
 from twadvisor.settings import Settings
 
 
-def create_analyzer(settings: Settings):
+def create_analyzer(settings: Settings, provider: str | None = None):
     """Create the configured analyzer implementation."""
 
-    provider = settings.ai.provider
-    keystore = KeyStore(settings.security.keyring_service)
+    provider = resolve_ai_provider(settings, provider)
+    api_key, _source = resolve_ai_api_key(settings, provider)
     if provider == "claude":
-        api_key = keystore.get_secret("anthropic")
-        if not api_key:
-            raise ValueError("Missing anthropic API key in keyring")
         return ClaudeAnalyzer(
             api_key=api_key,
             model=settings.ai.model_claude,
@@ -27,9 +24,6 @@ def create_analyzer(settings: Settings):
             db_path=settings.app.db_path,
         )
     if provider == "openai":
-        api_key = keystore.get_secret("openai")
-        if not api_key:
-            raise ValueError("Missing openai API key in keyring")
         return OpenAIAnalyzer(
             api_key=api_key,
             model=settings.ai.model_openai,
@@ -38,9 +32,6 @@ def create_analyzer(settings: Settings):
             db_path=settings.app.db_path,
         )
     if provider == "gemini":
-        api_key = keystore.get_secret("gemini")
-        if not api_key:
-            raise ValueError("Missing gemini API key in keyring")
         return GeminiAnalyzer(
             api_key=api_key,
             model=settings.ai.model_gemini,
